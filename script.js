@@ -1,7 +1,7 @@
 // 全局变量
 let materialsData = {};
 let materialOrderTracker = {};
-let currentOrder = 1;
+let materialCurrentOrders = {}; // 改为每种材料独立的计数器
 let lastOptimizationResult = null;
 
 // 数据预处理函数 - 支持两种格式
@@ -10,7 +10,7 @@ function parseInventoryData(inputText) {
     const lines = inputText.trim().split('\n');
     let localMaterialsData = {};
     let localOrderTracker = {};
-    let localCurrentOrder = currentOrder;
+    let localCurrentOrders = {...materialCurrentOrders}; // 复制当前计数器状态
     
     let i = 0;
     while (i < lines.length) {
@@ -28,16 +28,19 @@ function parseInventoryData(inputText) {
                     weaponLine = weaponLine.split('(')[0].trim();
                 }
                 
-                // 初始化数据结构
+                // 初始化数据结构和计数器
                 if (!localMaterialsData[weaponLine]) {
                     localMaterialsData[weaponLine] = [];
                     localOrderTracker[weaponLine] = [];
+                    if (!localCurrentOrders[weaponLine]) {
+                        localCurrentOrders[weaponLine] = 1;
+                    }
                 }
                 
                 // 添加磨损值和顺序
                 localMaterialsData[weaponLine].push(wearValue);
-                localOrderTracker[weaponLine].push(localCurrentOrder);
-                localCurrentOrder++;
+                localOrderTracker[weaponLine].push(localCurrentOrders[weaponLine]);
+                localCurrentOrders[weaponLine]++;
                 
                 i++; // 跳过武器名称行
             }
@@ -53,16 +56,19 @@ function parseInventoryData(inputText) {
                     const wearValue = parseFloat(wearMatch[1]);
                     const weaponName = prevLine;
                     
-                    // 初始化数据结构
+                    // 初始化数据结构和计数器
                     if (!localMaterialsData[weaponName]) {
                         localMaterialsData[weaponName] = [];
                         localOrderTracker[weaponName] = [];
+                        if (!localCurrentOrders[weaponName]) {
+                            localCurrentOrders[weaponName] = 1;
+                        }
                     }
                     
                     // 添加磨损值和顺序
                     localMaterialsData[weaponName].push(wearValue);
-                    localOrderTracker[weaponName].push(localCurrentOrder);
-                    localCurrentOrder++;
+                    localOrderTracker[weaponName].push(localCurrentOrders[weaponName]);
+                    localCurrentOrders[weaponName]++;
                 }
             }
         }
@@ -72,10 +78,13 @@ function parseInventoryData(inputText) {
             const weaponName = line;
             let j = i + 1;
             
-            // 初始化数据结构
+            // 初始化数据结构和计数器
             if (!localMaterialsData[weaponName]) {
                 localMaterialsData[weaponName] = [];
                 localOrderTracker[weaponName] = [];
+                if (!localCurrentOrders[weaponName]) {
+                    localCurrentOrders[weaponName] = 1;
+                }
             }
             
             // 收集该武器下的所有磨损值
@@ -85,8 +94,8 @@ function parseInventoryData(inputText) {
                 if (wearMatch) {
                     const wearValue = parseFloat(wearMatch[1]);
                     localMaterialsData[weaponName].push(wearValue);
-                    localOrderTracker[weaponName].push(localCurrentOrder);
-                    localCurrentOrder++;
+                    localOrderTracker[weaponName].push(localCurrentOrders[weaponName]);
+                    localCurrentOrders[weaponName]++;
                 }
                 j++;
             }
@@ -97,7 +106,11 @@ function parseInventoryData(inputText) {
         i++;
     }
     
-    return { materials: localMaterialsData, orders: localOrderTracker, newOrder: localCurrentOrder };
+    return { 
+        materials: localMaterialsData, 
+        orders: localOrderTracker, 
+        currentOrders: localCurrentOrders 
+    };
 }
 
 // 处理数据 - 合并了添加数据和更新显示的功能
@@ -118,7 +131,10 @@ function processData() {
             materialOrderTracker[materialName].push(...result.orders[materialName]);
         }
         
-        currentOrder = result.newOrder;
+        // 更新每种材料的计数器
+        for (const [materialName, currentOrder] of Object.entries(result.currentOrders)) {
+            materialCurrentOrders[materialName] = currentOrder;
+        }
         
         showStatus(`成功处理数据！当前材料总数: ${getTotalMaterials()}`, 'success');
         
@@ -142,7 +158,7 @@ function processData() {
 function clearData() {
     materialsData = {};
     materialOrderTracker = {};
-    currentOrder = 1;
+    materialCurrentOrders = {};
     lastOptimizationResult = null;
     document.getElementById('inventoryInput').value = '';
     document.getElementById('processedData').textContent = 'materials_data = {}';
