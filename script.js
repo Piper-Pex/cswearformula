@@ -3,7 +3,7 @@ let materialsData = {};
 let materialOrderTracker = {};
 let currentOrder = 1;
 
-// 数据预处理函数
+// 数据预处理函数 - 支持两种格式
 function parseInventoryData(inputText) {
     console.log("开始解析数据...");
     const lines = inputText.trim().split('\n');
@@ -15,6 +15,7 @@ function parseInventoryData(inputText) {
     while (i < lines.length) {
         const line = lines[i].trim();
         
+        // 格式1: 原始库存网站格式
         if (line.startsWith('磨损:')) {
             const wearValue = parseFloat(line.replace('磨损:', '').trim());
             
@@ -40,6 +41,58 @@ function parseInventoryData(inputText) {
                 i++; // 跳过武器名称行
             }
         }
+        // 格式2: 未使用材料格式 (包含"原始磨损:"和武器名称标题)
+        else if (line.includes('原始磨损:') && i > 0) {
+            // 检查前一行是否是武器名称
+            const prevLine = i > 0 ? lines[i-1].trim() : '';
+            if (prevLine && !prevLine.includes('原始磨损:') && !prevLine.includes('未使用材料') && !prevLine.includes('归一化磨损')) {
+                // 提取磨损值
+                const wearMatch = line.match(/原始磨损:\s*([0-9.]+)/);
+                if (wearMatch) {
+                    const wearValue = parseFloat(wearMatch[1]);
+                    const weaponName = prevLine;
+                    
+                    // 初始化数据结构
+                    if (!localMaterialsData[weaponName]) {
+                        localMaterialsData[weaponName] = [];
+                        localOrderTracker[weaponName] = [];
+                    }
+                    
+                    // 添加磨损值和顺序
+                    localMaterialsData[weaponName].push(wearValue);
+                    localOrderTracker[weaponName].push(localCurrentOrder);
+                    localCurrentOrder++;
+                }
+            }
+        }
+        // 格式3: 简化的未使用材料格式 (只有武器名称和磨损值)
+        else if (line && !line.includes('原始磨损:') && !line.includes('归一化磨损:') && !line.includes('未使用材料') && 
+                 i + 1 < lines.length && lines[i + 1].trim().includes('原始磨损:')) {
+            const weaponName = line;
+            let j = i + 1;
+            
+            // 初始化数据结构
+            if (!localMaterialsData[weaponName]) {
+                localMaterialsData[weaponName] = [];
+                localOrderTracker[weaponName] = [];
+            }
+            
+            // 收集该武器下的所有磨损值
+            while (j < lines.length && lines[j].trim().includes('原始磨损:')) {
+                const wearLine = lines[j].trim();
+                const wearMatch = wearLine.match(/原始磨损:\s*([0-9.]+)/);
+                if (wearMatch) {
+                    const wearValue = parseFloat(wearMatch[1]);
+                    localMaterialsData[weaponName].push(wearValue);
+                    localOrderTracker[weaponName].push(localCurrentOrder);
+                    localCurrentOrder++;
+                }
+                j++;
+            }
+            
+            i = j - 1; // 跳过已处理的行
+        }
+        
         i++;
     }
     
@@ -60,15 +113,10 @@ function addInventoryData() {
     for (const [materialName, wears] of Object.entries(result.materials)) {
         if (!materialsData[materialName]) {
             materialsData[materialName] = [];
-        }
-        materialsData[materialName].push(...wears);
-    }
-    
-    for (const [materialName, orders] of Object.entries(result.orders)) {
-        if (!materialOrderTracker[materialName]) {
             materialOrderTracker[materialName] = [];
         }
-        materialOrderTracker[materialName].push(...orders);
+        materialsData[materialName].push(...wears);
+        materialOrderTracker[materialName].push(...result.orders[materialName]);
     }
     
     currentOrder = result.newOrder;
@@ -110,15 +158,17 @@ function getTotalMaterials() {
     return Object.values(materialsData).reduce((total, wears) => total + wears.length, 0);
 }
 
-// 更新处理后的数据显示
+// 更新处理后的数据显示 - 现在包含顺序信息
 function updateProcessedDataDisplay() {
     let output = 'materials_data = {\n';
     
     for (const [materialName, wearValues] of Object.entries(materialsData)) {
         output += `    "${materialName}": [\n`;
         
-        for (const wearValue of wearValues) {
-            output += `        ${wearValue},\n`;
+        for (let i = 0; i < wearValues.length; i++) {
+            const wearValue = wearValues[i];
+            const order = materialOrderTracker[materialName][i];
+            output += `        ${wearValue},  // 原始位置: ${order}\n`;
         }
         
         output += '    ],\n';
@@ -141,7 +191,7 @@ function generateRangeInputs() {
         const safeId = materialName.replace(/\s+/g, '_');
         
         rangeDiv.innerHTML = `
-            <label>${materialName}</label>
+            <label>${materialName} (${materialsData[materialName].length}个材料)</label>
             <div class="input-group">
                 <div>
                     <label for="min_${safeId}">最小磨损:</label>
@@ -198,7 +248,7 @@ function resetOptimization() {
     showStatus('优化结果已重置', 'info');
 }
 
-// 优化算法核心函数
+// 优化算法核心函数 - 现在包含原始位置信息
 function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed) {
     // 计算目标平均变形磨损
     const targetAvgTransformedWear = (targetMaxWear - targetMinWear) / (targetMaxWearFixed - targetMinWear);
@@ -219,6 +269,7 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
         
         for (let i = 0; i < wears.length; i++) {
             const wear = wears[i];
+            const originalOrder = materialOrderTracker[materialName][i];
             
             // 使用归一化公式: 变形磨损 = (材料磨损 - 材料最低磨损) / (材料最高磨损 - 材料最低磨损)
             const normalizedWear = (wear - minWear) / wearRange;
@@ -231,7 +282,8 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
                 transformed_wear: normalizedWear,
                 min_wear: minWear,
                 max_wear: maxWear,
-                wear_range: wearRange
+                wear_range: wearRange,
+                original_order: originalOrder  // 保存原始位置
             });
         }
     }
@@ -325,7 +377,7 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
     };
 }
 
-// 显示优化结果
+// 显示优化结果 - 现在包含原始位置信息
 function displayOptimizationResults(result) {
     const resultsContent = document.getElementById('resultsContent');
     let html = '';
@@ -378,11 +430,11 @@ function displayOptimizationResults(result) {
                 ${replacementSuggestions}
             </div>`;
             
-            html += '<div><strong>组内材料:</strong></div>';
+            html += '<div><strong>组内材料 (包含原始位置):</strong></div>';
             for (const material of group.materials) {
                 const isReplaceable = material.id === minWearMaterial.id;
                 html += `<div class="material-item ${isReplaceable ? 'suggestion' : ''}">
-                    ${material.name}: 原始磨损 ${material.original_wear.toFixed(6)}, 归一化磨损 ${material.transformed_wear.toFixed(6)}
+                    ${material.name}: 原始磨损 ${material.original_wear.toFixed(6)}, 归一化磨损 ${material.transformed_wear.toFixed(6)}, 原始位置: ${material.original_order}
                     ${isReplaceable ? ' [可替换]' : ''}
                 </div>`;
             }
@@ -392,7 +444,7 @@ function displayOptimizationResults(result) {
     }
     
     if (result.unused_materials.length > 0) {
-        html += '<h3>未使用材料:</h3>';
+        html += '<h3>未使用材料 (可复制到输入框继续处理):</h3>';
         const unusedByType = {};
         
         for (const material of result.unused_materials) {
@@ -401,21 +453,36 @@ function displayOptimizationResults(result) {
             }
             unusedByType[material.name].push({
                 original_wear: material.original_wear,
-                transformed_wear: material.transformed_wear
+                transformed_wear: material.transformed_wear,
+                original_order: material.original_order
             });
         }
         
+        // 为每种材料类型输出格式化的未使用材料
         for (const [materialName, materials] of Object.entries(unusedByType)) {
             materials.sort((a, b) => a.original_wear - b.original_wear);
+            
             html += `<div class="group-result">
                 <div class="group-header">${materialName}</div>`;
+            
             for (const material of materials) {
                 html += `<div class="material-item">
-                    原始磨损: ${material.original_wear.toFixed(6)}, 归一化磨损: ${material.transformed_wear.toFixed(6)}
+                    原始磨损: ${material.original_wear.toFixed(6)}, 归一化磨损: ${material.transformed_wear.toFixed(6)}, 原始位置: ${material.original_order}
                 </div>`;
             }
+            
+            // 添加复制按钮
+            html += `<div class="suggestion">
+                <button onclick="copyUnusedMaterials('${materialName}')" class="btn-secondary" style="margin-top: 10px;">复制${materialName}的未使用材料</button>
+            </div>`;
+            
             html += '</div>';
         }
+        
+        // 添加复制所有未使用材料的按钮
+        html += `<div class="suggestion">
+            <button onclick="copyAllUnusedMaterials()" class="btn-primary">复制所有未使用材料</button>
+        </div>`;
     }
     
     // 添加归一化说明
@@ -426,6 +493,57 @@ function displayOptimizationResults(result) {
     </div>`;
     
     resultsContent.innerHTML = html;
+}
+
+// 复制特定材料的未使用材料到剪贴板
+function copyUnusedMaterials(materialName) {
+    const unusedMaterials = [];
+    
+    // 找到该材料的所有未使用材料
+    for (const [name, materials] of Object.entries(materialsData)) {
+        if (name === materialName) {
+            for (let i = 0; i < materials.length; i++) {
+                unusedMaterials.push({
+                    name: name,
+                    wear: materials[i],
+                    order: materialOrderTracker[name][i]
+                });
+            }
+        }
+    }
+    
+    // 格式化为可粘贴的文本
+    let text = `${materialName}\n`;
+    unusedMaterials.forEach(material => {
+        text += `原始磨损: ${material.wear.toFixed(6)}\n`;
+    });
+    
+    navigator.clipboard.writeText(text).then(() => {
+        showStatus(`已复制${materialName}的未使用材料到剪贴板`, 'success');
+    }).catch(err => {
+        console.error('复制失败:', err);
+        showStatus('复制失败，请手动复制', 'error');
+    });
+}
+
+// 复制所有未使用材料到剪贴板
+function copyAllUnusedMaterials() {
+    let text = '';
+    
+    for (const [materialName, wears] of Object.entries(materialsData)) {
+        text += `${materialName}\n`;
+        for (let i = 0; i < wears.length; i++) {
+            text += `原始磨损: ${wears[i].toFixed(6)}\n`;
+        }
+        text += '\n';
+    }
+    
+    navigator.clipboard.writeText(text.trim()).then(() => {
+        showStatus('已复制所有未使用材料到剪贴板', 'success');
+    }).catch(err => {
+        console.error('复制失败:', err);
+        showStatus('复制失败，请手动复制', 'error');
+    });
 }
 
 // 初始化页面
