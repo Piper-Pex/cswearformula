@@ -593,6 +593,7 @@ function copyAllUnusedMaterials() {
 }
 
 // 更新结果显示函数，包含效率信息
+// 更新结果显示函数，包含效率信息
 function displayOptimizationResults(result) {
     const resultsContent = document.getElementById('resultsContent');
     let html = '';
@@ -604,8 +605,7 @@ function displayOptimizationResults(result) {
         使用材料数: ${result.total_used}<br>
         剩余材料数: ${result.total_unused}<br>
         材料利用率: ${((result.total_used / (result.total_used + result.total_unused)) * 100).toFixed(1)}%<br>
-        平均磨损利用率: ${(result.avg_utilization * 100).toFixed(1)}%<br>
-        平均组合效率: ${result.avg_efficiency.toFixed(1)}%
+        平均磨损利用率: ${(result.avg_utilization * 100).toFixed(1)}%
     </div>`;
     
     if (result.groups.length > 0) {
@@ -614,17 +614,13 @@ function displayOptimizationResults(result) {
         for (let i = 0; i < result.groups.length; i++) {
             const group = result.groups[i];
             const wearDiff = result.target_total_transformed_wear - group.total_transformed_wear;
-            const phaseInfo = group.phase === 2 ? ' (第二阶段)' : ' (第一阶段)';
             
             html += `<div class="group-result">
                 <div class="group-header">
-                    第 ${i + 1} 组${phaseInfo}
+                    第 ${i + 1} 组
                 </div>
-                <div>总归一化磨损: ${group.total_transformed_wear.toFixed(6)}</div>
-                <div>实际产出磨损: ${group.actual_wear.toFixed(6)}</div>
-                <div>与目标差值: ${wearDiff.toFixed(6)}</div>
-                <div>磨损利用率: ${(group.wear_utilization * 100).toFixed(1)}%</div>
-                <div>组合效率: ${group.efficiency.toFixed(1)}%</div>`;
+                <div>实际产出磨损: <span style="color: #28a745; font-weight: bold;">${group.actual_wear.toFixed(6)}</span></div>
+                <div>磨损利用率: ${(group.wear_utilization * 100).toFixed(1)}%</div>`;
             
             // 找到组内变形磨损最小的材料
             const minWearMaterial = group.materials.reduce((min, material) => 
@@ -642,12 +638,12 @@ function displayOptimizationResults(result) {
                 if (sampleMaterial) {
                     // 将归一化磨损转换回原始磨损
                     const replacementOriginalWear = replacementTransformedWear * sampleMaterial.wear_range + sampleMaterial.min_wear;
-                    replacementSuggestions += `<div>${materialType}: 需要磨损 ${replacementOriginalWear.toFixed(6)}</div>`;
+                    replacementSuggestions += `<div>${materialType}: 需要磨损 <span style="color: #28a745; font-weight: bold;">${replacementOriginalWear.toFixed(6)}</span></div>`;
                 }
             }
             
             html += `<div class="suggestion">
-                <strong>替换建议:</strong> 将最小归一化磨损材料替换为归一化磨损 ${replacementTransformedWear.toFixed(6)} 的材料
+                <strong>替换建议:</strong> 将最小归一化磨损材料替换为归一化磨损 <span style="color: #28a745; font-weight: bold;">${replacementTransformedWear.toFixed(6)}</span> 的材料
                 <div><strong>具体对应原始磨损:</strong></div>
                 ${replacementSuggestions}
             </div>`;
@@ -656,7 +652,7 @@ function displayOptimizationResults(result) {
             for (const material of group.materials) {
                 const isReplaceable = material.id === minWearMaterial.id;
                 html += `<div class="material-item ${isReplaceable ? 'suggestion' : ''}">
-                    ${material.name}: 原始磨损 ${material.original_wear.toFixed(6)}, 归一化磨损 ${material.transformed_wear.toFixed(6)}, 原始位置: ${material.original_order}
+                    ${material.name}: <span style="color: #28a745; font-weight: bold;">原始磨损 ${material.original_wear.toFixed(6)}</span>, <span style="color: #6c757d; opacity: 0.7;">归一化磨损 ${material.transformed_wear.toFixed(6)}, 原始位置: ${material.original_order}</span>
                     ${isReplaceable ? ' [可替换]' : ''}
                 </div>`;
             }
@@ -689,7 +685,7 @@ function displayOptimizationResults(result) {
             
             for (const material of materials) {
                 html += `<div class="material-item">
-                    原始磨损: ${material.original_wear.toFixed(6)}, 归一化磨损: ${material.transformed_wear.toFixed(6)}, 原始位置: ${material.original_order}
+                    <span style="color: #28a745; font-weight: bold;">原始磨损: ${material.original_wear.toFixed(6)}</span>, <span style="color: #6c757d; opacity: 0.7;">归一化磨损: ${material.transformed_wear.toFixed(6)}, 原始位置: ${material.original_order}</span>
                 </div>`;
             }
             
@@ -711,7 +707,7 @@ function displayOptimizationResults(result) {
     html += `<div class="status info">
         <strong>归一化说明:</strong><br>
         所有材料的磨损都通过公式 <code>归一化磨损 = (原始磨损 - 材料最低磨损) / (材料最高磨损 - 材料最低磨损)</code> 转换到0-1区间<br>
-        产出磨损通过公式 <code>产出磨损 = (平均归一化磨损) × (目标最大磨损 - 目标最小磨损) + 目标最小磨损</code> 计算<br>
+        产出磨损通过公式 <code>产出磨损 = (平均归一化磨损) × (合成后金饰品的最大磨损 - 目标最小磨损) + 目标最小磨损</code> 计算<br>
         <strong>优化策略:</strong> 优先使用高磨损材料，两阶段优化，最大化磨损利用率
     </div>`;
     
