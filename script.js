@@ -100,42 +100,46 @@ function parseInventoryData(inputText) {
     return { materials: localMaterialsData, orders: localOrderTracker, newOrder: localCurrentOrder };
 }
 
-// 处理数据 - 合并了添加数据和更新显示的功能
-function processData() {
+// 添加库存数据
+function addInventoryData() {
     const input = document.getElementById('inventoryInput').value;
-    
-    // 如果有输入数据，则解析并添加
-    if (input.trim()) {
-        const result = parseInventoryData(input);
-        
-        // 合并到全局数据
-        for (const [materialName, wears] of Object.entries(result.materials)) {
-            if (!materialsData[materialName]) {
-                materialsData[materialName] = [];
-                materialOrderTracker[materialName] = [];
-            }
-            materialsData[materialName].push(...wears);
-            materialOrderTracker[materialName].push(...result.orders[materialName]);
-        }
-        
-        currentOrder = result.newOrder;
-        
-        showStatus(`成功处理数据！当前材料总数: ${getTotalMaterials()}`, 'success');
-        
-        // 清空输入框
-        document.getElementById('inventoryInput').value = '';
-    } else {
-        // 如果没有输入数据，只是更新显示
-        if (getTotalMaterials() === 0) {
-            showStatus('没有可处理的数据', 'error');
-            return;
-        }
-        showStatus('数据已更新显示', 'info');
+    if (!input.trim()) {
+        showStatus('请输入库存数据', 'error');
+        return;
     }
     
-    // 更新显示和生成输入框
+    const result = parseInventoryData(input);
+    
+    // 合并到全局数据
+    for (const [materialName, wears] of Object.entries(result.materials)) {
+        if (!materialsData[materialName]) {
+            materialsData[materialName] = [];
+            materialOrderTracker[materialName] = [];
+        }
+        materialsData[materialName].push(...wears);
+        materialOrderTracker[materialName].push(...result.orders[materialName]);
+    }
+    
+    currentOrder = result.newOrder;
+    
+    showStatus(`成功添加数据！当前材料总数: ${getTotalMaterials()}`, 'success');
     updateProcessedDataDisplay();
     generateRangeInputs();
+    
+    // 清空输入框
+    document.getElementById('inventoryInput').value = '';
+}
+
+// 处理数据
+function processData() {
+    if (getTotalMaterials() === 0) {
+        showStatus('没有可处理的数据', 'error');
+        return;
+    }
+    
+    updateProcessedDataDisplay();
+    generateRangeInputs();
+    showStatus('数据处理完成！', 'success');
 }
 
 // 清空数据
@@ -712,7 +716,8 @@ function displayOptimizationResults(result) {
 // 初始化页面
 document.addEventListener('DOMContentLoaded', function() {
     // 绑定按钮事件
-    document.getElementById('addDataBtn').addEventListener('click', processData);
+    document.getElementById('addDataBtn').addEventListener('click', addInventoryData);
+    document.getElementById('processDataBtn').addEventListener('click', processData);
     document.getElementById('clearDataBtn').addEventListener('click', clearData);
     document.getElementById('optimizeBtn').addEventListener('click', optimizeAllocation);
     document.getElementById('resetBtn').addEventListener('click', resetOptimization);
