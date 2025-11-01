@@ -1,0 +1,229 @@
+// 修正后的优化算法核心函数
+function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed) {
+    // 计算目标平均变形磨损
+    const targetAvgTransformedWear = (targetMaxWear - targetMinWear) / (targetMaxWearFixed - targetMinWear);
+    const targetTotalTransformedWear = targetAvgTransformedWear * 5;
+    
+    console.log(`目标磨损: ≤${targetMaxWear}`);
+    console.log(`目标平均变形磨损: ${targetAvgTransformedWear.toFixed(6)}`);
+    console.log(`目标总变形磨损: ${targetTotalTransformedWear.toFixed(6)}`);
+    
+    // 计算每个材料的归一化变形磨损
+    const transformedMaterials = [];
+    
+    for (const [materialName, wears] of Object.entries(materialsData)) {
+        const [minWear, maxWear] = materialRanges[materialName];
+        const wearRange = maxWear - minWear;
+        
+        console.log(`${materialName}: 磨损范围 [${minWear}, ${maxWear}], 范围大小: ${wearRange}`);
+        
+        for (let i = 0; i < wears.length; i++) {
+            const wear = wears[i];
+            
+            // 使用归一化公式: 变形磨损 = (材料磨损 - 材料最低磨损) / (材料最高磨损 - 材料最低磨损)
+            const normalizedWear = (wear - minWear) / wearRange;
+            
+            const materialId = `${materialName}_${i}`;
+            transformedMaterials.push({
+                id: materialId,
+                name: materialName,
+                original_wear: wear,
+                transformed_wear: normalizedWear,
+                min_wear: minWear,
+                max_wear: maxWear,
+                wear_range: wearRange
+            });
+        }
+    }
+    
+    // 按变形磨损排序
+    transformedMaterials.sort((a, b) => a.transformed_wear - b.transformed_wear);
+    
+    console.log(`总材料数量: ${transformedMaterials.length}`);
+    console.log("归一化变形磨损统计:");
+    console.log(`  最小值: ${Math.min(...transformedMaterials.map(m => m.transformed_wear)).toFixed(6)}`);
+    console.log(`  最大值: ${Math.max(...transformedMaterials.map(m => m.transformed_wear)).toFixed(6)}`);
+    console.log(`  平均值: ${(transformedMaterials.reduce((sum, m) => sum + m.transformed_wear, 0) / transformedMaterials.length).toFixed(6)}`);
+    
+    // 优化算法：寻找接近目标值的组合
+    const groups = [];
+    const availableMaterials = [...transformedMaterials];
+    
+    while (availableMaterials.length >= 5) {
+        let bestCombination = null;
+        let bestDiff = Infinity;
+        
+        // 使用滑动窗口方法寻找接近目标值的组合
+        for (let i = 0; i <= availableMaterials.length - 5; i++) {
+            const combination = availableMaterials.slice(i, i + 5);
+            const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
+            const diff = Math.abs(totalWear - targetTotalTransformedWear);
+            
+            // 检查是否满足磨损限制
+            const avgTransformed = totalWear / 5;
+            const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+            
+            if (actualWear <= targetMaxWear && diff < bestDiff) {
+                bestCombination = combination;
+                bestDiff = diff;
+            }
+        }
+        
+        // 如果找不到合适的组合，尝试最小磨损组合
+        if (bestCombination === null) {
+            bestCombination = availableMaterials.slice(0, 5);
+            const totalWear = bestCombination.reduce((sum, m) => sum + m.transformed_wear, 0);
+            const avgTransformed = totalWear / 5;
+            const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+            
+            if (actualWear > targetMaxWear) {
+                break;
+            }
+        }
+        
+        const totalWear = bestCombination.reduce((sum, m) => sum + m.transformed_wear, 0);
+        const avgTransformed = totalWear / 5;
+        const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+        
+        groups.push({
+            materials: [...bestCombination],
+            total_transformed_wear: totalWear,
+            actual_wear: actualWear,
+            wear_diff: Math.abs(actualWear - targetMaxWear)
+        });
+        
+        // 从可用材料中移除已使用的材料
+        for (const material of bestCombination) {
+            const index = availableMaterials.findIndex(m => m.id === material.id);
+            if (index !== -1) {
+                availableMaterials.splice(index, 1);
+            }
+        }
+    }
+    
+    const unusedMaterials = availableMaterials;
+    
+    console.log(`合成结果:`);
+    console.log(`可合成组数: ${groups.length}`);
+    console.log(`使用材料数: ${groups.length * 5}`);
+    console.log(`剩余材料数: ${unusedMaterials.length}`);
+    
+    let avgWearDiff = 0;
+    if (groups.length > 0) {
+        avgWearDiff = groups.reduce((sum, group) => sum + group.wear_diff, 0) / groups.length;
+        console.log(`平均磨损差距: ${avgWearDiff.toFixed(6)}`);
+    }
+    
+    return {
+        groups: groups,
+        unused_materials: unusedMaterials,
+        total_groups: groups.length,
+        total_used: groups.length * 5,
+        total_unused: unusedMaterials.length,
+        target_total_transformed_wear: targetTotalTransformedWear,
+        avg_wear_diff: avgWearDiff
+    };
+}
+
+// 修正后的显示优化结果函数
+function displayOptimizationResults(result) {
+    const resultsContent = document.getElementById('resultsContent');
+    let html = '';
+    
+    html += `<div class="status success">
+        <strong>优化完成！</strong><br>
+        总材料数: ${result.total_used + result.total_unused}<br>
+        成功合成组数: ${result.total_groups}<br>
+        使用材料数: ${result.total_used}<br>
+        剩余材料数: ${result.total_unused}<br>
+        材料利用率: ${((result.total_used / (result.total_used + result.total_unused)) * 100).toFixed(1)}%
+    </div>`;
+    
+    if (result.groups.length > 0) {
+        html += '<h3>详细分组情况:</h3>';
+        
+        for (let i = 0; i < result.groups.length; i++) {
+            const group = result.groups[i];
+            const wearDiff = result.target_total_transformed_wear - group.total_transformed_wear;
+            
+            html += `<div class="group-result">
+                <div class="group-header">
+                    第 ${i + 1} 组 (总归一化磨损: ${group.total_transformed_wear.toFixed(6)}, 实际产出磨损: ${group.actual_wear.toFixed(6)})
+                </div>
+                <div>与目标差值: ${wearDiff.toFixed(6)}</div>`;
+            
+            // 找到组内变形磨损最小的材料
+            const minWearMaterial = group.materials.reduce((min, material) => 
+                material.transformed_wear < min.transformed_wear ? material : min
+            );
+            
+            const replacementTransformedWear = wearDiff + minWearMaterial.transformed_wear;
+            
+            // 为每种材料类型计算替换建议
+            let replacementSuggestions = '';
+            const materialTypes = [...new Set(group.materials.map(m => m.name))];
+            
+            for (const materialType of materialTypes) {
+                const sampleMaterial = group.materials.find(m => m.name === materialType);
+                if (sampleMaterial) {
+                    // 将归一化磨损转换回原始磨损
+                    const replacementOriginalWear = replacementTransformedWear * sampleMaterial.wear_range + sampleMaterial.min_wear;
+                    replacementSuggestions += `<div>${materialType}: 需要磨损 ${replacementOriginalWear.toFixed(6)}</div>`;
+                }
+            }
+            
+            html += `<div class="suggestion">
+                <strong>替换建议:</strong> 将最小归一化磨损材料替换为归一化磨损 ${replacementTransformedWear.toFixed(6)} 的材料
+                <div><strong>具体对应原始磨损:</strong></div>
+                ${replacementSuggestions}
+            </div>`;
+            
+            html += '<div><strong>组内材料:</strong></div>';
+            for (const material of group.materials) {
+                const isReplaceable = material.id === minWearMaterial.id;
+                html += `<div class="material-item ${isReplaceable ? 'suggestion' : ''}">
+                    ${material.name}: 原始磨损 ${material.original_wear.toFixed(6)}, 归一化磨损 ${material.transformed_wear.toFixed(6)}
+                    ${isReplaceable ? ' [可替换]' : ''}
+                </div>`;
+            }
+            
+            html += '</div>';
+        }
+    }
+    
+    if (result.unused_materials.length > 0) {
+        html += '<h3>未使用材料:</h3>';
+        const unusedByType = {};
+        
+        for (const material of result.unused_materials) {
+            if (!unusedByType[material.name]) {
+                unusedByType[material.name] = [];
+            }
+            unusedByType[material.name].push({
+                original_wear: material.original_wear,
+                transformed_wear: material.transformed_wear
+            });
+        }
+        
+        for (const [materialName, materials] of Object.entries(unusedByType)) {
+            materials.sort((a, b) => a.original_wear - b.original_wear);
+            html += `<div class="group-result">
+                <div class="group-header">${materialName}</div>`;
+            for (const material of materials) {
+                html += `<div class="material-item">
+                    原始磨损: ${material.original_wear.toFixed(6)}, 归一化磨损: ${material.transformed_wear.toFixed(6)}
+                </div>`;
+            }
+            html += '</div>';
+        }
+    }
+    
+    // 添加归一化说明
+    html += `<div class="status info">
+        <strong>归一化说明:</strong><br>
+        所有材料的磨损都通过公式 <code>归一化磨损 = (原始磨损 - 材料最低磨损) / (材料最高磨损 - 材料最低磨损)</code> 转换到0-1区间<br>
+        产出磨损通过公式 <code>产出磨损 = (平均归一化磨损) × (目标最大磨损 - 目标最小磨损) + 目标最小磨损</code> 计算
+    </div>`;
+    
+    resultsContent.innerHTML = html;
+}
