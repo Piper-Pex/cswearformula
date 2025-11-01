@@ -831,4 +831,129 @@ function displayOptimizationResults(result) {
     html += `<div class="status success">
         <strong>优化完成！</strong><br>
         总材料数: ${result.total_used + result.total_unused}<br>
-        成功合成组数:
+        成功合成组数: ${result.total_groups}<br>
+        使用材料数: ${result.total_used}<br>
+        剩余材料数: ${result.total_unused}<br>
+        材料利用率: ${((result.total_used / (result.total_used + result.total_unused)) * 100).toFixed(1)}%<br>
+        平均磨损利用率: ${(result.avg_utilization * 100).toFixed(1)}%
+    </div>`;
+    
+    if (result.groups.length > 0) {
+        html += '<h3>详细分组情况:</h3>';
+        
+        for (let i = 0; i < result.groups.length; i++) {
+            const group = result.groups[i];
+            const wearDiff = result.target_total_transformed_wear - group.total_transformed_wear;
+            
+            html += `<div class="group-result">
+                <div class="group-header">
+                    第 ${i + 1} 组
+                </div>
+                <div>实际产出磨损: <span style="color: #28a745; font-weight: bold;">${group.actual_wear.toFixed(6)}</span></div>
+                <div>磨损利用率: ${(group.wear_utilization * 100).toFixed(1)}%</div>`;
+            
+            // 找到组内变形磨损最小的材料
+            const minWearMaterial = group.materials.reduce((min, material) => 
+                material.transformed_wear < min.transformed_wear ? material : min
+            );
+            
+            const replacementTransformedWear = wearDiff + minWearMaterial.transformed_wear;
+            
+            // 为每种材料类型计算替换建议
+            let replacementSuggestions = '';
+            const materialTypes = [...new Set(group.materials.map(m => m.name))];
+            
+            for (const materialType of materialTypes) {
+                const sampleMaterial = group.materials.find(m => m.name === materialType);
+                if (sampleMaterial) {
+                    // 将归一化磨损转换回原始磨损
+                    const replacementOriginalWear = replacementTransformedWear * sampleMaterial.wear_range + sampleMaterial.min_wear;
+                    replacementSuggestions += `<div>${materialType}: 需要磨损 <span style="color: #28a745; font-weight: bold;">${replacementOriginalWear.toFixed(6)}</span></div>`;
+                }
+            }
+            
+            html += `<div class="suggestion">
+                <strong>替换建议:</strong> 将最小归一化磨损材料替换为归一化磨损 <span style="color: #28a745; font-weight: bold;">${replacementTransformedWear.toFixed(6)}</span> 的材料
+                <div><strong>具体对应原始磨损:</strong></div>
+                ${replacementSuggestions}
+            </div>`;
+            
+            html += '<div><strong>组内材料 (包含原始位置):</strong></div>';
+            for (const material of group.materials) {
+                const isReplaceable = material.id === minWearMaterial.id;
+                html += `<div class="material-item ${isReplaceable ? 'suggestion' : ''}">
+                    ${material.name}: <span style="color: #28a745; font-weight: bold;">原始磨损 ${material.original_wear.toFixed(6)}</span>, <span style="color: #6c757d; opacity: 0.7;">归一化磨损 ${material.transformed_wear.toFixed(6)}, 原始位置: ${material.original_order}</span>
+                    ${isReplaceable ? ' [可替换]' : ''}
+                </div>`;
+            }
+            
+            html += '</div>';
+        }
+    }
+    
+    if (result.unused_materials.length > 0) {
+        html += '<h3>未使用材料 (可复制到输入框继续处理):</h3>';
+        const unusedByType = {};
+        
+        for (const material of result.unused_materials) {
+            if (!unusedByType[material.name]) {
+                unusedByType[material.name] = [];
+            }
+            unusedByType[material.name].push({
+                original_wear: material.original_wear,
+                transformed_wear: material.transformed_wear,
+                original_order: material.original_order
+            });
+        }
+        
+        // 为每种材料类型输出格式化的未使用材料
+        for (const [materialName, materials] of Object.entries(unusedByType)) {
+            materials.sort((a, b) => a.original_wear - b.original_wear);
+            
+            html += `<div class="group-result">
+                <div class="group-header">${materialName}</div>`;
+            
+            for (const material of materials) {
+                html += `<div class="material-item">
+                    <span style="color: #28a745; font-weight: bold;">原始磨损: ${material.original_wear.toFixed(6)}</span>, <span style="color: #6c757d; opacity: 0.7;">归一化磨损: ${material.transformed_wear.toFixed(6)}, 原始位置: ${material.original_order}</span>
+                </div>`;
+            }
+            
+            // 添加复制按钮
+            html += `<div class="suggestion">
+                <button onclick="copyUnusedMaterials('${materialName}')" class="btn-secondary" style="margin-top: 10px;">复制${materialName}的未使用材料</button>
+            </div>`;
+            
+            html += '</div>';
+        }
+        
+        // 添加复制所有未使用材料的按钮
+        html += `<div class="suggestion">
+            <button onclick="copyAllUnusedMaterials()" class="btn-primary">复制所有未使用材料</button>
+        </div>`;
+    }
+    
+    // 添加归一化说明
+    html += `<div class="status info">
+        <strong>归一化说明:</strong><br>
+        所有材料的磨损都通过公式 <code>归一化磨损 = (原始磨损 - 材料最低磨损) / (材料最高磨损 - 材料最低磨损)</code> 转换到0-1区间<br>
+        产出磨损通过公式 <code>产出磨损 = (平均归一化磨损) × (合成后金饰品的最大磨损 - 目标最小磨损) + 目标最小磨损</code> 计算<br>
+        <strong>优化策略:</strong> 优先使用高磨损材料，两阶段优化，最大化磨损利用率
+    </div>`;
+    
+    resultsContent.innerHTML = html;
+}
+
+// 初始化页面
+document.addEventListener('DOMContentLoaded', function() {
+    // 绑定按钮事件
+    document.getElementById('addDataBtn').addEventListener('click', processData);
+    document.getElementById('clearDataBtn').addEventListener('click', clearData);
+    document.getElementById('optimizeBtn').addEventListener('click', optimizeAllocation);
+    document.getElementById('resetBtn').addEventListener('click', resetOptimization);
+    
+    // 添加魔法材料按钮事件绑定
+    document.getElementById('magicMaterialBtn').addEventListener('click', findMagicMaterial);
+    
+    showStatus('准备就绪，请粘贴库存数据开始', 'info');
+});
