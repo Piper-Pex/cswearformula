@@ -130,18 +130,6 @@ function addInventoryData() {
     document.getElementById('inventoryInput').value = '';
 }
 
-// 处理数据
-function processData() {
-    if (getTotalMaterials() === 0) {
-        showStatus('没有可处理的数据', 'error');
-        return;
-    }
-    
-    updateProcessedDataDisplay();
-    generateRangeInputs();
-    showStatus('数据处理完成！', 'success');
-}
-
 // 清空数据
 function clearData() {
     materialsData = {};
@@ -593,7 +581,6 @@ function copyAllUnusedMaterials() {
 }
 
 // 更新结果显示函数，包含效率信息
-// 更新结果显示函数，包含效率信息
 function displayOptimizationResults(result) {
     const resultsContent = document.getElementById('resultsContent');
     let html = '';
@@ -718,7 +705,6 @@ function displayOptimizationResults(result) {
 document.addEventListener('DOMContentLoaded', function() {
     // 绑定按钮事件
     document.getElementById('addDataBtn').addEventListener('click', addInventoryData);
-    document.getElementById('processDataBtn').addEventListener('click', processData);
     document.getElementById('clearDataBtn').addEventListener('click', clearData);
     document.getElementById('optimizeBtn').addEventListener('click', optimizeAllocation);
     document.getElementById('resetBtn').addEventListener('click', resetOptimization);
