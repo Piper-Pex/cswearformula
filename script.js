@@ -1,4 +1,204 @@
-// 修正后的优化算法核心函数
+// 全局变量
+let materialsData = {};
+let materialOrderTracker = {};
+let currentOrder = 1;
+
+// 数据预处理函数
+function parseInventoryData(inputText) {
+    console.log("开始解析数据...");
+    const lines = inputText.trim().split('\n');
+    let localMaterialsData = {};
+    let localOrderTracker = {};
+    let localCurrentOrder = currentOrder;
+    
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i].trim();
+        
+        if (line.startsWith('磨损:')) {
+            const wearValue = parseFloat(line.replace('磨损:', '').trim());
+            
+            if (i + 1 < lines.length) {
+                let weaponLine = lines[i + 1].trim();
+                
+                // 清理武器名称，去掉括号内的磨损描述
+                if (weaponLine.includes('(')) {
+                    weaponLine = weaponLine.split('(')[0].trim();
+                }
+                
+                // 初始化数据结构
+                if (!localMaterialsData[weaponLine]) {
+                    localMaterialsData[weaponLine] = [];
+                    localOrderTracker[weaponLine] = [];
+                }
+                
+                // 添加磨损值和顺序
+                localMaterialsData[weaponLine].push(wearValue);
+                localOrderTracker[weaponLine].push(localCurrentOrder);
+                localCurrentOrder++;
+                
+                i++; // 跳过武器名称行
+            }
+        }
+        i++;
+    }
+    
+    return { materials: localMaterialsData, orders: localOrderTracker, newOrder: localCurrentOrder };
+}
+
+// 添加库存数据
+function addInventoryData() {
+    const input = document.getElementById('inventoryInput').value;
+    if (!input.trim()) {
+        showStatus('请输入库存数据', 'error');
+        return;
+    }
+    
+    const result = parseInventoryData(input);
+    
+    // 合并到全局数据
+    for (const [materialName, wears] of Object.entries(result.materials)) {
+        if (!materialsData[materialName]) {
+            materialsData[materialName] = [];
+        }
+        materialsData[materialName].push(...wears);
+    }
+    
+    for (const [materialName, orders] of Object.entries(result.orders)) {
+        if (!materialOrderTracker[materialName]) {
+            materialOrderTracker[materialName] = [];
+        }
+        materialOrderTracker[materialName].push(...orders);
+    }
+    
+    currentOrder = result.newOrder;
+    
+    showStatus(`成功添加数据！当前材料总数: ${getTotalMaterials()}`, 'success');
+    updateProcessedDataDisplay();
+    generateRangeInputs();
+    
+    // 清空输入框
+    document.getElementById('inventoryInput').value = '';
+}
+
+// 处理数据
+function processData() {
+    if (getTotalMaterials() === 0) {
+        showStatus('没有可处理的数据', 'error');
+        return;
+    }
+    
+    updateProcessedDataDisplay();
+    generateRangeInputs();
+    showStatus('数据处理完成！', 'success');
+}
+
+// 清空数据
+function clearData() {
+    materialsData = {};
+    materialOrderTracker = {};
+    currentOrder = 1;
+    document.getElementById('inventoryInput').value = '';
+    document.getElementById('processedData').textContent = 'materials_data = {}';
+    document.getElementById('rangeInputs').innerHTML = '';
+    document.getElementById('resultsContent').innerHTML = '';
+    showStatus('数据已清空', 'info');
+}
+
+// 获取材料总数
+function getTotalMaterials() {
+    return Object.values(materialsData).reduce((total, wears) => total + wears.length, 0);
+}
+
+// 更新处理后的数据显示
+function updateProcessedDataDisplay() {
+    let output = 'materials_data = {\n';
+    
+    for (const [materialName, wearValues] of Object.entries(materialsData)) {
+        output += `    "${materialName}": [\n`;
+        
+        for (const wearValue of wearValues) {
+            output += `        ${wearValue},\n`;
+        }
+        
+        output += '    ],\n';
+    }
+    
+    output += '}';
+    document.getElementById('processedData').textContent = output;
+}
+
+// 生成磨损范围输入
+function generateRangeInputs() {
+    const rangeInputs = document.getElementById('rangeInputs');
+    rangeInputs.innerHTML = '';
+    
+    for (const materialName of Object.keys(materialsData)) {
+        const rangeDiv = document.createElement('div');
+        rangeDiv.className = 'range-input';
+        
+        // 创建安全的ID（替换空格为下划线）
+        const safeId = materialName.replace(/\s+/g, '_');
+        
+        rangeDiv.innerHTML = `
+            <label>${materialName}</label>
+            <div class="input-group">
+                <div>
+                    <label for="min_${safeId}">最小磨损:</label>
+                    <input type="number" id="min_${safeId}" step="0.01" min="0" max="1" value="0">
+                </div>
+                <div>
+                    <label for="max_${safeId}">最大磨损:</label>
+                    <input type="number" id="max_${safeId}" step="0.01" min="0" max="1" value="1">
+                </div>
+            </div>
+        `;
+        
+        rangeInputs.appendChild(rangeDiv);
+    }
+}
+
+// 显示状态消息
+function showStatus(message, type) {
+    const statusElement = document.getElementById('statusMessage');
+    statusElement.textContent = message;
+    statusElement.className = `status ${type}`;
+}
+
+// 优化分配
+function optimizeAllocation() {
+    if (getTotalMaterials() === 0) {
+        showStatus('没有可优化的数据', 'error');
+        return;
+    }
+    
+    // 获取磨损范围配置
+    const materialRanges = {};
+    for (const materialName of Object.keys(materialsData)) {
+        const safeId = materialName.replace(/\s+/g, '_');
+        const minWear = parseFloat(document.getElementById(`min_${safeId}`).value);
+        const maxWear = parseFloat(document.getElementById(`max_${safeId}`).value);
+        materialRanges[materialName] = [minWear, maxWear];
+    }
+    
+    const targetMaxWear = parseFloat(document.getElementById('targetWear').value);
+    const targetMinWear = parseFloat(document.getElementById('targetMinWear').value);
+    const targetMaxWearFixed = parseFloat(document.getElementById('targetMaxWearFixed').value);
+    
+    // 运行优化算法
+    const result = optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
+    
+    // 显示结果
+    displayOptimizationResults(result);
+}
+
+// 重置优化
+function resetOptimization() {
+    document.getElementById('resultsContent').innerHTML = '';
+    showStatus('优化结果已重置', 'info');
+}
+
+// 优化算法核心函数
 function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed) {
     // 计算目标平均变形磨损
     const targetAvgTransformedWear = (targetMaxWear - targetMinWear) / (targetMaxWearFixed - targetMinWear);
@@ -125,7 +325,7 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
     };
 }
 
-// 修正后的显示优化结果函数
+// 显示优化结果
 function displayOptimizationResults(result) {
     const resultsContent = document.getElementById('resultsContent');
     let html = '';
@@ -227,3 +427,15 @@ function displayOptimizationResults(result) {
     
     resultsContent.innerHTML = html;
 }
+
+// 初始化页面
+document.addEventListener('DOMContentLoaded', function() {
+    // 绑定按钮事件
+    document.getElementById('addDataBtn').addEventListener('click', addInventoryData);
+    document.getElementById('processDataBtn').addEventListener('click', processData);
+    document.getElementById('clearDataBtn').addEventListener('click', clearData);
+    document.getElementById('optimizeBtn').addEventListener('click', optimizeAllocation);
+    document.getElementById('resetBtn').addEventListener('click', resetOptimization);
+    
+    showStatus('准备就绪，请粘贴库存数据开始', 'info');
+});
