@@ -1001,7 +1001,7 @@ function copyAllUnusedMaterials() {
     });
 }
 
-// 更新结果显示函数，修正替换建议的标记
+// 更新结果显示函数，修正替换建议的显示
 function displayOptimizationResults(result) {
     const resultsContent = document.getElementById('resultsContent');
     let html = '';
@@ -1036,10 +1036,38 @@ function displayOptimizationResults(result) {
             if (replacementTargets.length > 0) {
                 const bestReplacement = replacementTargets[0]; // 取最优的替换建议
                 
+                // 获取所有材料类型的磨损范围配置
+                const materialRanges = {};
+                for (const materialName of Object.keys(materialsData)) {
+                    const safeId = materialName.replace(/\s+/g, '_');
+                    const minWear = parseFloat(document.getElementById(`min_${safeId}`).value);
+                    const maxWear = parseFloat(document.getElementById(`max_${safeId}`).value);
+                    materialRanges[materialName] = [minWear, maxWear];
+                }
+                
+                // 为每种材料类型计算对应的原始磨损
+                let originalWearSuggestions = '';
+                for (const [materialName, range] of Object.entries(materialRanges)) {
+                    const [minWear, maxWear] = range;
+                    const wearRange = maxWear - minWear;
+                    const originalWear = bestReplacement.requiredTransformedWear * wearRange + minWear;
+                    
+                    // 检查计算出的原始磨损是否在合理范围内
+                    const isValid = originalWear >= minWear && originalWear <= maxWear;
+                    const displayClass = isValid ? 'valid-wear' : 'invalid-wear';
+                    
+                    originalWearSuggestions += `
+                        <div class="${displayClass}">
+                            ${materialName}: <span style="font-weight: bold;">${originalWear.toFixed(17)}</span>
+                            ${!isValid ? ' <span style="color: #dc3545;">(超出材料磨损范围)</span>' : ''}
+                        </div>`;
+                }
+                
                 html += `<div class="suggestion">
                     <strong>最优替换建议:</strong> 将 ${bestReplacement.materialName} 的材料替换为归一化磨损 <span style="color: #28a745; font-weight: bold;">${bestReplacement.requiredTransformedWear.toFixed(17)}</span> 的材料
-                    <div><strong>具体对应原始磨损:</strong> <span style="color: #28a745; font-weight: bold;">${bestReplacement.requiredOriginalWear.toFixed(17)}</span></div>
-                    <div><small>改善程度: +${bestReplacement.improvement.toFixed(17)} 归一化磨损</small></div>
+                    <div style="margin-top: 8px;"><strong>具体对应原始磨损 (所有材料类型):</strong></div>
+                    ${originalWearSuggestions}
+                    <div style="margin-top: 8px;"><small>改善程度: +${bestReplacement.improvement.toFixed(17)} 归一化磨损</small></div>
                 </div>`;
             }
             
