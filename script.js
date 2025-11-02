@@ -1001,7 +1001,7 @@ function copyAllUnusedMaterials() {
     });
 }
 
-// 更新结果显示函数，包含效率信息
+// 更新结果显示函数，修正替换建议的标记
 function displayOptimizationResults(result) {
     const resultsContent = document.getElementById('resultsContent');
     let html = '';
@@ -1044,8 +1044,21 @@ function displayOptimizationResults(result) {
             }
             
             html += '<div><strong>组内材料 (包含原始位置):</strong></div>';
+            
+            // 找出组内归一化磨损最小的材料（需要被替换的那个）
+            let minTransformedWear = Infinity;
+            let materialToReplace = null;
+            
             for (const material of group.materials) {
-                const isReplaceable = replacementTargets.some(r => r.replaceMaterial.id === material.id);
+                if (material.transformed_wear < minTransformedWear) {
+                    minTransformedWear = material.transformed_wear;
+                    materialToReplace = material;
+                }
+            }
+            
+            // 显示所有材料，但只在需要替换的材料上标记
+            for (const material of group.materials) {
+                const isReplaceable = material === materialToReplace;
                 html += `<div class="material-item ${isReplaceable ? 'suggestion' : ''}">
                     ${material.name}: <span style="color: #28a745; font-weight: bold;">原始磨损 ${material.original_wear.toFixed(17)}</span>, <span style="color: #6c757d; opacity: 0.7;">归一化磨损 ${material.transformed_wear.toFixed(17)}, 原始位置: ${material.original_order}</span>
                     ${isReplaceable ? ' [可替换]' : ''}
