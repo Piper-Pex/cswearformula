@@ -293,7 +293,7 @@ function calculateReplacementRanges(group, targetTotalTransformedWear) {
     return replacements;
 }
 
-// 优化算法核心函数 - 改进版本：从高磨损开始，两阶段优化
+// 优化算法核心函数 - 改进版本：更全面地搜索接近目标磨损的组合
 function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed) {
     // 计算目标平均变形磨损
     const targetAvgTransformedWear = (targetMaxWear - targetMinWear) / (targetMaxWearFixed - targetMinWear);
@@ -342,84 +342,83 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
     console.log(`  最小值: ${Math.min(...transformedMaterials.map(m => m.transformed_wear)).toFixed(17)}`);
     console.log(`  平均值: ${(transformedMaterials.reduce((sum, m) => sum + m.transformed_wear, 0) / transformedMaterials.length).toFixed(17)}`);
     
-    // 第一阶段：从高磨损材料开始，寻找最接近目标的组合
+    // 改进的组合搜索策略
     const groups = [];
     let availableMaterials = [...transformedMaterials];
     
-    console.log("=== 第一阶段：高磨损材料优化 ===");
+    console.log("=== 改进的组合搜索策略 ===");
     
     while (availableMaterials.length >= 5) {
         let bestCombination = null;
-        let bestDiff = Infinity;
-        let bestWearUtilization = 0;
+        let bestActualWear = 0; // 优先选择实际磨损更高的组合
+        let bestTotalTransformed = 0;
         
-        // 从可用材料的开始位置（高磨损区域）搜索
-        for (let i = 0; i <= Math.min(20, availableMaterials.length - 5); i++) {
-            const combination = availableMaterials.slice(i, i + 5);
-            const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
-            const diff = Math.abs(totalWear - targetTotalTransformedWear);
-            
-            // 计算磨损利用率（越接近目标，利用率越高）
-            const wearUtilization = 1 - (diff / targetTotalTransformedWear);
-            
-            // 检查是否满足磨损限制
-            const avgTransformed = totalWear / 5;
-            const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
-            
-            if (actualWear <= targetMaxWear) {
-                // 优先选择更接近目标且利用率更高的组合
-                if (diff < bestDiff || (diff === bestDiff && wearUtilization > bestWearUtilization)) {
-                    bestCombination = combination;
-                    bestDiff = diff;
-                    bestWearUtilization = wearUtilization;
+        // 策略1: 优先搜索高磨损组合
+        // 从高磨损区域开始，尝试找到最接近但不超过目标磨损的组合
+        for (let startIdx = 0; startIdx <= Math.min(50, availableMaterials.length - 5); startIdx++) {
+            // 尝试不同大小的搜索窗口
+            for (let windowSize = 5; windowSize <= Math.min(20, availableMaterials.length - startIdx); windowSize++) {
+                if (startIdx + 5 > availableMaterials.length) continue;
+                
+                // 在窗口内搜索最佳组合
+                for (let i = startIdx; i <= startIdx + windowSize - 5; i++) {
+                    const combination = availableMaterials.slice(i, i + 5);
+                    const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
+                    const avgTransformed = totalWear / 5;
+                    const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+                    
+                    // 检查是否满足磨损限制且比当前最佳组合更好
+                    if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
+                        bestCombination = combination;
+                        bestActualWear = actualWear;
+                        bestTotalTransformed = totalWear;
+                    }
                 }
             }
         }
         
-        // 如果找不到合适的组合，尝试扩展搜索范围
-        if (bestCombination === null && availableMaterials.length > 20) {
-            console.log("扩展搜索范围...");
+        // 策略2: 如果策略1没找到足够好的组合，放宽搜索范围
+        if (bestCombination === null || bestActualWear < targetMaxWear * 0.95) {
+            console.log("策略1未找到理想组合，启用策略2：全局搜索");
+            
+            // 在整个可用材料范围内搜索
             for (let i = 0; i <= availableMaterials.length - 5; i++) {
                 const combination = availableMaterials.slice(i, i + 5);
                 const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
-                const diff = Math.abs(totalWear - targetTotalTransformedWear);
-                
-                const wearUtilization = 1 - (diff / targetTotalTransformedWear);
                 const avgTransformed = totalWear / 5;
                 const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                 
-                if (actualWear <= targetMaxWear) {
-                    if (diff < bestDiff || (diff === bestDiff && wearUtilization > bestWearUtilization)) {
-                        bestCombination = combination;
-                        bestDiff = diff;
-                        bestWearUtilization = wearUtilization;
-                    }
+                if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
+                    bestCombination = combination;
+                    bestActualWear = actualWear;
+                    bestTotalTransformed = totalWear;
                 }
             }
         }
         
-        // 如果还是找不到，尝试允许轻微超出目标（但仍在合理范围内）
+        // 策略3: 如果还是找不到，尝试允许轻微超出目标（但仍在合理范围内）
         if (bestCombination === null) {
-            const tolerance = targetTotalTransformedWear * 0.1; // 允许10%的误差
+            console.log("策略2未找到合适组合，启用策略3：允许轻微超出");
+            const tolerance = targetMaxWear * 0.01; // 允许1%的超出
+            
             for (let i = 0; i <= availableMaterials.length - 5; i++) {
                 const combination = availableMaterials.slice(i, i + 5);
                 const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
-                const diff = Math.abs(totalWear - targetTotalTransformedWear);
+                const avgTransformed = totalWear / 5;
+                const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                 
-                if (diff <= tolerance) {
-                    const wearUtilization = 1 - (diff / targetTotalTransformedWear);
-                    if (diff < bestDiff || (diff === bestDiff && wearUtilization > bestWearUtilization)) {
-                        bestCombination = combination;
-                        bestDiff = diff;
-                        bestWearUtilization = wearUtilization;
-                    }
+                if (actualWear <= targetMaxWear + tolerance && actualWear > bestActualWear) {
+                    bestCombination = combination;
+                    bestActualWear = actualWear;
+                    bestTotalTransformed = totalWear;
                 }
             }
         }
         
-        // 如果仍然找不到，使用最小磨损组合作为最后手段
+        // 如果仍然找不到，使用最高磨损组合作为最后手段
         if (bestCombination === null) {
-            bestCombination = availableMaterials.slice(-5); // 取最低的5个
+            console.log("使用最高磨损组合作为最后手段");
+            bestCombination = availableMaterials.slice(0, 5); // 取最高的5个
             const totalWear = bestCombination.reduce((sum, m) => sum + m.transformed_wear, 0);
             const avgTransformed = totalWear / 5;
             const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
@@ -429,24 +428,25 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
                 break;
             }
             
-            bestDiff = Math.abs(totalWear - targetTotalTransformedWear);
-            bestWearUtilization = 1 - (bestDiff / targetTotalTransformedWear);
+            bestActualWear = actualWear;
+            bestTotalTransformed = totalWear;
         }
         
-        const totalWear = bestCombination.reduce((sum, m) => sum + m.transformed_wear, 0);
-        const avgTransformed = totalWear / 5;
-        const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+        // 计算磨损利用率和效率
+        const wearDiff = Math.abs(bestActualWear - targetMaxWear);
+        const wearUtilization = 1 - (wearDiff / targetMaxWear);
+        const efficiency = (bestTotalTransformed / targetTotalTransformedWear) * 100;
         
         groups.push({
             materials: [...bestCombination],
-            total_transformed_wear: totalWear,
-            actual_wear: actualWear,
-            wear_diff: Math.abs(actualWear - targetMaxWear),
-            wear_utilization: bestWearUtilization,
-            efficiency: (totalWear / targetTotalTransformedWear) * 100
+            total_transformed_wear: bestTotalTransformed,
+            actual_wear: bestActualWear,
+            wear_diff: wearDiff,
+            wear_utilization: wearUtilization,
+            efficiency: efficiency
         });
         
-        console.log(`组 ${groups.length}: 总归一化磨损=${totalWear.toFixed(17)}, 实际磨损=${actualWear.toFixed(17)}, 利用率=${(bestWearUtilization * 100).toFixed(1)}%`);
+        console.log(`组 ${groups.length}: 实际磨损=${bestActualWear.toFixed(17)}, 总归一化磨损=${bestTotalTransformed.toFixed(17)}, 利用率=${(wearUtilization * 100).toFixed(1)}%`);
         
         // 从可用材料中移除已使用的材料
         for (const material of bestCombination) {
@@ -458,67 +458,116 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
         
         // 重新按磨损从高到低排序剩余材料
         availableMaterials.sort((a, b) => b.transformed_wear - a.transformed_wear);
+        
+        // 如果剩余材料很少，提前停止
+        if (availableMaterials.length < 10) {
+            console.log("剩余材料较少，提前停止搜索");
+            break;
+        }
     }
     
-    // 第二阶段：对剩余的低磨损材料进行精细组合
-    console.log("=== 第二阶段：低磨损材料精细优化 ===");
+    // 第二阶段：对剩余的低磨损材料进行精细组合（如果还有足够材料）
+    console.log("=== 第二阶段：剩余材料精细优化 ===");
     
     if (availableMaterials.length >= 5) {
-        // 对剩余材料按磨损从低到高排序，尝试不同的组合策略
-        availableMaterials.sort((a, b) => a.transformed_wear - b.transformed_wear);
-        
+        // 对剩余材料尝试不同的组合策略
         const remainingGroups = [];
         let phase2Materials = [...availableMaterials];
         
+        // 按磨损从高到低排序
+        phase2Materials.sort((a, b) => b.transformed_wear - a.transformed_wear);
+        
         while (phase2Materials.length >= 5) {
             let bestCombination = null;
-            let bestDiff = Infinity;
+            let bestActualWear = 0;
             
             // 尝试多种组合策略
-            for (let strategy = 0; strategy < 3; strategy++) {
+            for (let strategy = 0; strategy < 5; strategy++) {
                 let combination;
                 
                 switch (strategy) {
-                    case 0: // 取最低的5个
+                    case 0: // 取最高的5个
                         combination = phase2Materials.slice(0, 5);
                         break;
-                    case 1: // 取中间的5个
-                        const mid = Math.floor(phase2Materials.length / 2) - 2;
-                        combination = phase2Materials.slice(mid, mid + 5);
+                    case 1: // 取次高的5个
+                        combination = phase2Materials.slice(1, 6);
                         break;
-                    case 2: // 取最高的5个（在剩余材料中）
-                        combination = phase2Materials.slice(-5);
+                    case 2: // 混合高低磨损
+                        combination = [
+                            phase2Materials[0],
+                            phase2Materials[1],
+                            phase2Materials[Math.floor(phase2Materials.length / 2)],
+                            phase2Materials[phase2Materials.length - 2],
+                            phase2Materials[phase2Materials.length - 1]
+                        ];
+                        break;
+                    case 3: // 随机采样多个组合
+                        for (let attempt = 0; attempt < 10; attempt++) {
+                            const sampled = [];
+                            const indices = new Set();
+                            while (indices.size < 5) {
+                                indices.add(Math.floor(Math.random() * phase2Materials.length));
+                            }
+                            for (const idx of indices) {
+                                sampled.push(phase2Materials[idx]);
+                            }
+                            const totalWear = sampled.reduce((sum, m) => sum + m.transformed_wear, 0);
+                            const avgTransformed = totalWear / 5;
+                            const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+                            
+                            if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
+                                bestCombination = sampled;
+                                bestActualWear = actualWear;
+                            }
+                        }
+                        break;
+                    case 4: // 系统性地搜索所有可能组合（仅当材料较少时）
+                        if (phase2Materials.length <= 15) {
+                            // 生成所有可能的5个材料组合
+                            const allCombinations = generateCombinations(phase2Materials, 5);
+                            for (const comb of allCombinations) {
+                                const totalWear = comb.reduce((sum, m) => sum + m.transformed_wear, 0);
+                                const avgTransformed = totalWear / 5;
+                                const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+                                
+                                if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
+                                    bestCombination = comb;
+                                    bestActualWear = actualWear;
+                                }
+                            }
+                        }
                         break;
                 }
                 
-                const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
-                const diff = Math.abs(totalWear - targetTotalTransformedWear);
-                const avgTransformed = totalWear / 5;
-                const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
-                
-                if (actualWear <= targetMaxWear && diff < bestDiff) {
-                    bestCombination = combination;
-                    bestDiff = diff;
+                if (strategy !== 3 && strategy !== 4) { // 策略3和4已经在内部处理
+                    const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
+                    const avgTransformed = totalWear / 5;
+                    const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+                    
+                    if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
+                        bestCombination = combination;
+                        bestActualWear = actualWear;
+                    }
                 }
             }
             
             if (bestCombination) {
                 const totalWear = bestCombination.reduce((sum, m) => sum + m.transformed_wear, 0);
-                const avgTransformed = totalWear / 5;
-                const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
-                const wearUtilization = 1 - (bestDiff / targetTotalTransformedWear);
+                const wearDiff = Math.abs(bestActualWear - targetMaxWear);
+                const wearUtilization = 1 - (wearDiff / targetMaxWear);
+                const efficiency = (totalWear / targetTotalTransformedWear) * 100;
                 
                 remainingGroups.push({
                     materials: [...bestCombination],
                     total_transformed_wear: totalWear,
-                    actual_wear: actualWear,
-                    wear_diff: Math.abs(actualWear - targetMaxWear),
+                    actual_wear: bestActualWear,
+                    wear_diff: wearDiff,
                     wear_utilization: wearUtilization,
-                    efficiency: (totalWear / targetTotalTransformedWear) * 100,
+                    efficiency: efficiency,
                     phase: 2
                 });
                 
-                console.log(`第二阶段组 ${remainingGroups.length}: 总归一化磨损=${totalWear.toFixed(17)}, 实际磨损=${actualWear.toFixed(17)}`);
+                console.log(`第二阶段组 ${remainingGroups.length}: 实际磨损=${bestActualWear.toFixed(17)}`);
                 
                 // 移除已使用的材料
                 for (const material of bestCombination) {
@@ -584,6 +633,27 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
     lastOptimizationResult = fullResult;
     
     return fullResult;
+}
+
+// 辅助函数：生成所有可能的组合（用于小规模搜索）
+function generateCombinations(arr, k) {
+    const result = [];
+    
+    function backtrack(start, current) {
+        if (current.length === k) {
+            result.push([...current]);
+            return;
+        }
+        
+        for (let i = start; i < arr.length; i++) {
+            current.push(arr[i]);
+            backtrack(i + 1, current);
+            current.pop();
+        }
+    }
+    
+    backtrack(0, []);
+    return result;
 }
 
 // 测试特定变形磨损值的魔法材料
