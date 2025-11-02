@@ -264,6 +264,35 @@ function resetOptimization() {
     showStatus('优化结果已重置', 'info');
 }
 
+// 计算替换建议范围
+function calculateReplacementRanges(group, targetTotalTransformedWear) {
+    const currentTotal = group.total_transformed_wear;
+    const neededIncrease = targetTotalTransformedWear - currentTotal;
+    
+    const replacements = [];
+    
+    // 对组内每个材料计算替换建议
+    for (const material of group.materials) {
+        const requiredWear = material.transformed_wear + neededIncrease;
+        if (requiredWear >= 0 && requiredWear <= 1) {
+            // 计算对应原始磨损
+            const originalWear = requiredWear * material.wear_range + material.min_wear;
+            replacements.push({
+                materialName: material.name,
+                replaceMaterial: material,
+                requiredTransformedWear: requiredWear,
+                requiredOriginalWear: originalWear,
+                improvement: neededIncrease
+            });
+        }
+    }
+    
+    // 按改善程度排序
+    replacements.sort((a, b) => b.improvement - a.improvement);
+    
+    return replacements;
+}
+
 // 优化算法核心函数 - 改进版本：从高磨损开始，两阶段优化
 function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed) {
     // 计算目标平均变形磨损
@@ -558,18 +587,19 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
 }
 
 // 测试特定变形磨损值的魔法材料
-function testMagicMaterial(transformedWear, baseMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed) {
+function testMagicMaterial(transformedWear, baseMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed, materialType = null) {
     // 复制基础材料数据
     const testMaterials = JSON.parse(JSON.stringify(baseMaterials));
     
-    // 选择一种材料类型来添加魔法材料（选择材料数量最多的类型）
-    let targetMaterial = Object.keys(testMaterials)[0];
-    let maxCount = 0;
-    
-    for (const [materialName, wears] of Object.entries(testMaterials)) {
-        if (wears.length > maxCount) {
-            maxCount = wears.length;
-            targetMaterial = materialName;
+    // 如果指定了材料类型，使用该类型；否则选择材料数量最多的类型
+    let targetMaterial = materialType;
+    if (!targetMaterial) {
+        let maxCount = 0;
+        for (const [materialName, wears] of Object.entries(testMaterials)) {
+            if (wears.length > maxCount) {
+                maxCount = wears.length;
+                targetMaterial = materialName;
+            }
         }
     }
     
@@ -587,7 +617,7 @@ function testMagicMaterial(transformedWear, baseMaterials, materialRanges, targe
     return result.total_groups;
 }
 
-// 寻找最优魔法材料函数
+// 寻找最优魔法材料函数 - 改进版本
 function findMagicMaterial() {
     if (getTotalMaterials() === 0) {
         showStatus('没有数据可进行魔法材料搜索', 'error');
@@ -626,65 +656,76 @@ function findMagicMaterial() {
     
     console.log(`基准组数: ${baselineGroups}`);
     
-    // 改进的搜索策略：更密集的搜索
     let bestTransformedWear = 0;
     let bestGroups = baselineGroups;
     let bestImprovement = 0;
     let candidatePoints = [];
+    let bestMaterialType = null;
     
-    // 第一阶段：密集搜索低磨损区域 (0.0001 到 0.1，步长 0.001)
-    console.log("第一阶段：密集搜索低磨损区域");
-    for (let transformedWear = 0.0001; transformedWear <= 0.1; transformedWear += 0.001) {
-        const testGroups = testMagicMaterial(transformedWear, reducedPrecisionMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
-        const improvement = testGroups - baselineGroups;
+    // 第一阶段：基于替换建议进行针对性搜索
+    console.log("=== 第一阶段：基于替换建议的针对性搜索 ===");
+    
+    if (lastOptimizationResult) {
+        const replacementTargets = [];
         
-        candidatePoints.push({
-            transformedWear: transformedWear,
-            groups: testGroups,
-            improvement: improvement
-        });
-        
-        if (improvement > bestImprovement) {
-            bestImprovement = improvement;
-            bestGroups = testGroups;
-            bestTransformedWear = transformedWear;
+        // 收集所有替换建议
+        for (const group of lastOptimizationResult.groups) {
+            const replacements = calculateReplacementRanges(group, lastOptimizationResult.target_total_transformed_wear);
+            for (const replacement of replacements) {
+                if (replacement.improvement > 0) { // 只考虑能改善的组合
+                    replacementTargets.push({
+                        transformedWear: replacement.requiredTransformedWear,
+                        materialType: replacement.materialName,
+                        improvement: replacement.improvement
+                    });
+                }
+            }
         }
         
-        console.log(`变形磨损 ${transformedWear.toFixed(7)}: ${testGroups} 组 (改善: +${improvement})`);
+        // 按改善程度排序
+        replacementTargets.sort((a, b) => b.improvement - a.improvement);
         
-        // 如果找到显著改善，提前进行精细搜索
-        if (improvement >= 2) {
-            console.log("找到显著改善，提前进入精细搜索");
-            break;
-        }
-    }
-    
-    // 第二阶段：在最佳点附近进行精细搜索（使用更高精度）
-    if (bestImprovement > 0) {
-        console.log("第二阶段：精细搜索");
-        const searchCenter = bestTransformedWear;
-        const searchRange = 0.02; // 搜索范围
-        
-        // 精细搜索时使用更小的步长，但仍保持较低精度以提高性能
-        for (let offset = -searchRange; offset <= searchRange; offset += 0.00001) {
-            const testWear = searchCenter + offset;
-            if (testWear >= 0 && testWear <= 1) {
-                const testGroups = testMagicMaterial(testWear, reducedPrecisionMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
-                const improvement = testGroups - baselineGroups;
-                
-                if (testGroups > bestGroups || (testGroups === bestGroups && testWear > bestTransformedWear)) {
-                    bestGroups = testGroups;
-                    bestTransformedWear = testWear;
-                    bestImprovement = improvement;
+        // 在最优替换建议附近进行搜索
+        for (const target of replacementTargets.slice(0, 10)) { // 取前10个最优目标
+            const center = target.transformedWear;
+            const range = 0.02; // 搜索范围
+            
+            console.log(`在替换目标 ${center.toFixed(7)} 附近搜索 (材料: ${target.materialType})`);
+            
+            for (let offset = -range; offset <= range; offset += 0.0001) {
+                const testWear = center + offset;
+                if (testWear >= 0 && testWear <= 1) {
+                    const testGroups = testMagicMaterial(testWear, reducedPrecisionMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed, target.materialType);
+                    const improvement = testGroups - baselineGroups;
+                    
+                    candidatePoints.push({
+                        transformedWear: testWear,
+                        groups: testGroups,
+                        improvement: improvement,
+                        materialType: target.materialType
+                    });
+                    
+                    if (improvement > bestImprovement || (improvement === bestImprovement && testWear > bestTransformedWear)) {
+                        bestImprovement = improvement;
+                        bestGroups = testGroups;
+                        bestTransformedWear = testWear;
+                        bestMaterialType = target.materialType;
+                    }
+                    
+                    if (improvement >= 2) {
+                        console.log(`找到显著改善: 变形磨损 ${testWear.toFixed(7)} -> ${testGroups} 组 (改善: +${improvement})`);
+                    }
                 }
             }
         }
     }
     
-    // 第三阶段：检查中高磨损区域是否有更好的结果
-    if (bestImprovement < 2) {
-        console.log("第三阶段：检查中高磨损区域");
-        for (let transformedWear = 0.1; transformedWear <= 1.0; transformedWear += 0.01) {
+    // 第二阶段：全局搜索作为备选（如果第一阶段没有找到改善）
+    if (bestImprovement === 0) {
+        console.log("=== 第二阶段：全局搜索 ===");
+        
+        // 搜索低磨损区域
+        for (let transformedWear = 0.0001; transformedWear <= 0.1; transformedWear += 0.001) {
             const testGroups = testMagicMaterial(transformedWear, reducedPrecisionMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
             const improvement = testGroups - baselineGroups;
             
@@ -699,8 +740,49 @@ function findMagicMaterial() {
                 bestGroups = testGroups;
                 bestTransformedWear = transformedWear;
             }
-            
-            console.log(`变形磨损 ${transformedWear.toFixed(7)}: ${testGroups} 组 (改善: +${improvement})`);
+        }
+        
+        // 搜索中高磨损区域
+        if (bestImprovement === 0) {
+            for (let transformedWear = 0.1; transformedWear <= 1.0; transformedWear += 0.01) {
+                const testGroups = testMagicMaterial(transformedWear, reducedPrecisionMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
+                const improvement = testGroups - baselineGroups;
+                
+                candidatePoints.push({
+                    transformedWear: transformedWear,
+                    groups: testGroups,
+                    improvement: improvement
+                });
+                
+                if (improvement > bestImprovement) {
+                    bestImprovement = improvement;
+                    bestGroups = testGroups;
+                    bestTransformedWear = transformedWear;
+                }
+            }
+        }
+    }
+    
+    // 第三阶段：在最佳点附近进行精细搜索
+    if (bestImprovement > 0) {
+        console.log("=== 第三阶段：精细搜索 ===");
+        
+        const searchCenter = bestTransformedWear;
+        const fineRange = 0.001;
+        const currentMaterialType = bestMaterialType;
+        
+        for (let offset = -fineRange; offset <= fineRange; offset += 0.00001) {
+            const testWear = searchCenter + offset;
+            if (testWear >= 0 && testWear <= 1) {
+                const testGroups = testMagicMaterial(testWear, reducedPrecisionMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed, currentMaterialType);
+                const improvement = testGroups - baselineGroups;
+                
+                if (testGroups > bestGroups || (testGroups === bestGroups && testWear > bestTransformedWear)) {
+                    bestGroups = testGroups;
+                    bestTransformedWear = testWear;
+                    bestImprovement = improvement;
+                }
+            }
         }
     }
     
@@ -711,44 +793,15 @@ function findMagicMaterial() {
         bestGroups: bestGroups,
         improvement: bestImprovement,
         candidatePoints: candidatePoints,
-        usedReducedPrecision: true // 标记使用了降低精度
+        bestMaterialType: bestMaterialType,
+        usedReducedPrecision: true
     };
     
     // 显示结果
     displayMagicMaterialResult();
 }
 
-// 测试特定变形磨损值的魔法材料（使用降低精度后的数据）
-function testMagicMaterial(transformedWear, baseMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed) {
-    // 复制基础材料数据
-    const testMaterials = JSON.parse(JSON.stringify(baseMaterials));
-    
-    // 选择一种材料类型来添加魔法材料（选择材料数量最多的类型）
-    let targetMaterial = Object.keys(testMaterials)[0];
-    let maxCount = 0;
-    
-    for (const [materialName, wears] of Object.entries(testMaterials)) {
-        if (wears.length > maxCount) {
-            maxCount = wears.length;
-            targetMaterial = materialName;
-        }
-    }
-    
-    // 获取目标材料的磨损范围
-    const [minWear, maxWear] = materialRanges[targetMaterial];
-    const wearRange = maxWear - minWear;
-    
-    // 将变形磨损转换回原始磨损并添加真实的材料
-    const originalWear = transformedWear * wearRange + minWear;
-    testMaterials[targetMaterial].push(originalWear);
-    
-    // 运行优化
-    const result = optimizeMaterialAllocation(testMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
-    
-    return result.total_groups;
-}
-
-// 显示魔法材料搜索结果（更新显示信息）
+// 显示魔法材料搜索结果
 function displayMagicMaterialResult() {
     const result = magicMaterialSearchResult;
     const resultsContent = document.getElementById('resultsContent');
@@ -777,15 +830,21 @@ function displayMagicMaterialResult() {
             const wearRange = maxWear - minWear;
             const originalWear = result.bestTransformedWear * wearRange + minWear;
             
-            originalWearSuggestions += `<div>${materialName}: <span style="color: #9b59b6; font-weight: bold;">${originalWear.toFixed(7)}</span></div>`;
+            originalWearSuggestions += `<div>${materialName}: <span style="color: #9b59b6; font-weight: bold;">${originalWear.toFixed(17)}</span></div>`;
         }
         
         html += `
         <div class="suggestion" style="background: #f3e8fd; border-left-color: #9b59b6;">
             <strong>🎉 找到魔法材料!</strong><br>
-            <div>最优变形磨损: <span style="color: #9b59b6; font-weight: bold;">${result.bestTransformedWear.toFixed(7)}</span></div>
+            <div>最优变形磨损: <span style="color: #9b59b6; font-weight: bold;">${result.bestTransformedWear.toFixed(17)}</span></div>
             <div>预期合成组数: <span style="color: #9b59b6; font-weight: bold;">${result.bestGroups}</span> 组</div>
-            <div>改善效果: <span style="color: #27ae60; font-weight: bold;">+${result.improvement}</span> 组</div>
+            <div>改善效果: <span style="color: #27ae60; font-weight: bold;">+${result.improvement}</span> 组</div>`;
+        
+        if (result.bestMaterialType) {
+            html += `<div>推荐材料类型: <span style="color: #9b59b6; font-weight: bold;">${result.bestMaterialType}</span></div>`;
+        }
+        
+        html += `
             <div style="margin-top: 10px;">
                 <strong>对应原始磨损:</strong><br>
                 ${originalWearSuggestions}
@@ -821,93 +880,6 @@ function displayMagicMaterialResult() {
     resultsContent.innerHTML = html;
     showStatus(`魔法材料搜索完成! ${result.improvement > 0 ? `找到改善 +${result.improvement} 组的最佳材料` : '未找到改善材料'}`, 
                result.improvement > 0 ? 'success' : 'info');
-}
-
-// 显示魔法材料搜索结果
-function displayMagicMaterialResult() {
-    const result = magicMaterialSearchResult;
-    const resultsContent = document.getElementById('resultsContent');
-    
-    let html = resultsContent.innerHTML; // 保留现有内容
-    
-    html += `<div class="group-result" style="border-left: 4px solid #9b59b6;">
-        <div class="group-header" style="color: #9b59b6;">🎯 魔法材料搜索结果</div>
-        
-        <div><strong>基准情况:</strong> ${result.baselineGroups} 个合成组</div>`;
-    
-    if (result.improvement > 0) {
-        // 计算所有材料类型的原始磨损建议
-        let originalWearSuggestions = '';
-        for (const materialName of Object.keys(materialsData)) {
-            const safeId = materialName.replace(/\s+/g, '_');
-            const minWear = parseFloat(document.getElementById(`min_${safeId}`).value) || 0;
-            const maxWear = parseFloat(document.getElementById(`max_${safeId}`).value) || 1;
-            const wearRange = maxWear - minWear;
-            const originalWear = result.bestTransformedWear * wearRange + minWear;
-            
-            originalWearSuggestions += `<div>${materialName}: <span style="color: #9b59b6; font-weight: bold;">${originalWear.toFixed(17)}</span></div>`;
-        }
-        
-        html += `
-        <div class="suggestion" style="background: #f3e8fd; border-left-color: #9b59b6;">
-            <strong>🎉 找到魔法材料!</strong><br>
-            <div>最优变形磨损: <span style="color: #9b59b6; font-weight: bold;">${result.bestTransformedWear.toFixed(17)}</span></div>
-            <div>预期合成组数: <span style="color: #9b59b6; font-weight: bold;">${result.bestGroups}</span> 组</div>
-            <div>改善效果: <span style="color: #27ae60; font-weight: bold;">+${result.improvement}</span> 组</div>
-            <div style="margin-top: 10px;">
-                <strong>对应原始磨损:</strong><br>
-                ${originalWearSuggestions}
-            </div>
-        </div>`;
-        
-        // 显示所有候选点信息
-        if (result.candidatePoints.length > 0) {
-            html += `<div><strong>搜索统计:</strong></div>`;
-            const uniqueGroups = [...new Set(result.candidatePoints.map(p => p.groups))].sort((a, b) => b - a);
-            
-            for (const groupCount of uniqueGroups) {
-                if (groupCount > result.baselineGroups) {
-                    const points = result.candidatePoints.filter(p => p.groups === groupCount);
-                    const wearValues = points.map(p => p.transformedWear);
-                    const minWear = Math.min(...wearValues).toFixed(17);
-                    const maxWear = Math.max(...wearValues).toFixed(17);
-                    const improvement = groupCount - result.baselineGroups;
-                    html += `<div>改善 +${improvement} 组: 变形磨损范围 [${minWear}, ${maxWear}] (${points.length}个测试点)</div>`;
-                }
-            }
-        }
-    } else {
-        html += `
-        <div class="status info">
-            <strong>未找到能改善合成组数的魔法材料</strong><br>
-            当前材料配置已经接近最优，添加单个材料无法产生改善效果。
-        </div>`;
-    }
-    
-    html += `</div>`;
-    
-    resultsContent.innerHTML = html;
-    showStatus(`魔法材料搜索完成! ${result.improvement > 0 ? `找到改善 +${result.improvement} 组的最佳材料` : '未找到改善材料'}`, 
-               result.improvement > 0 ? 'success' : 'info');
-}
-
-// 从变形磨损计算原始磨损（基于第一个材料的范围）
-function calculateOriginalWearFromTransformed(transformedWear) {
-    const materialNames = Object.keys(materialsData);
-    if (materialNames.length === 0) return transformedWear;
-    
-    const firstMaterial = materialNames[0];
-    const safeId = firstMaterial.replace(/\s+/g, '_');
-    
-    try {
-        const minWear = parseFloat(document.getElementById(`min_${safeId}`).value) || 0;
-        const maxWear = parseFloat(document.getElementById(`max_${safeId}`).value) || 1;
-        const wearRange = maxWear - minWear;
-        
-        return transformedWear * wearRange + minWear;
-    } catch (e) {
-        return transformedWear; // 回退到直接使用变形磨损
-    }
 }
 
 // 复制特定材料的未使用材料到剪贴板 - 基于优化结果
@@ -988,35 +960,22 @@ function displayOptimizationResults(result) {
                 <div>实际产出磨损: <span style="color: #28a745; font-weight: bold;">${group.actual_wear.toFixed(17)}</span></div>
                 <div>磨损利用率: ${(group.wear_utilization * 100).toFixed(1)}%</div>`;
             
-            // 找到组内变形磨损最小的材料
-            const minWearMaterial = group.materials.reduce((min, material) => 
-                material.transformed_wear < min.transformed_wear ? material : min
-            );
+            // 计算替换建议
+            const replacementTargets = calculateReplacementRanges(group, result.target_total_transformed_wear);
             
-            const replacementTransformedWear = wearDiff + minWearMaterial.transformed_wear;
-            
-            // 为每种材料类型计算替换建议
-            let replacementSuggestions = '';
-            const materialTypes = [...new Set(group.materials.map(m => m.name))];
-            
-            for (const materialType of materialTypes) {
-                const sampleMaterial = group.materials.find(m => m.name === materialType);
-                if (sampleMaterial) {
-                    // 将归一化磨损转换回原始磨损
-                    const replacementOriginalWear = replacementTransformedWear * sampleMaterial.wear_range + sampleMaterial.min_wear;
-                    replacementSuggestions += `<div>${materialType}: 需要磨损 <span style="color: #28a745; font-weight: bold;">${replacementOriginalWear.toFixed(17)}</span></div>`;
-                }
+            if (replacementTargets.length > 0) {
+                const bestReplacement = replacementTargets[0]; // 取最优的替换建议
+                
+                html += `<div class="suggestion">
+                    <strong>最优替换建议:</strong> 将 ${bestReplacement.materialName} 的材料替换为归一化磨损 <span style="color: #28a745; font-weight: bold;">${bestReplacement.requiredTransformedWear.toFixed(17)}</span> 的材料
+                    <div><strong>具体对应原始磨损:</strong> <span style="color: #28a745; font-weight: bold;">${bestReplacement.requiredOriginalWear.toFixed(17)}</span></div>
+                    <div><small>改善程度: +${bestReplacement.improvement.toFixed(17)} 归一化磨损</small></div>
+                </div>`;
             }
-            
-            html += `<div class="suggestion">
-                <strong>替换建议:</strong> 将最小归一化磨损材料替换为归一化磨损 <span style="color: #28a745; font-weight: bold;">${replacementTransformedWear.toFixed(17)}</span> 的材料
-                <div><strong>具体对应原始磨损:</strong></div>
-                ${replacementSuggestions}
-            </div>`;
             
             html += '<div><strong>组内材料 (包含原始位置):</strong></div>';
             for (const material of group.materials) {
-                const isReplaceable = material.id === minWearMaterial.id;
+                const isReplaceable = replacementTargets.some(r => r.replaceMaterial.id === material.id);
                 html += `<div class="material-item ${isReplaceable ? 'suggestion' : ''}">
                     ${material.name}: <span style="color: #28a745; font-weight: bold;">原始磨损 ${material.original_wear.toFixed(17)}</span>, <span style="color: #6c757d; opacity: 0.7;">归一化磨损 ${material.transformed_wear.toFixed(17)}, 原始位置: ${material.original_order}</span>
                     ${isReplaceable ? ' [可替换]' : ''}
