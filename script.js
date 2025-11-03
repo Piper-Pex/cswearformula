@@ -264,31 +264,40 @@ function resetOptimization() {
     showStatus('优化结果已重置', 'info');
 }
 
-// 计算替换建议范围
+// 修正替换建议计算函数
 function calculateReplacementRanges(group, targetTotalTransformedWear) {
     const currentTotal = group.total_transformed_wear;
     const neededIncrease = targetTotalTransformedWear - currentTotal;
     
     const replacements = [];
     
-    // 对组内每个材料计算替换建议
+    // 找出组内归一化磨损最小的材料（需要被替换的那个）
+    let minTransformedWear = Infinity;
+    let materialToReplace = null;
+    
     for (const material of group.materials) {
-        const requiredWear = material.transformed_wear + neededIncrease;
-        if (requiredWear >= 0 && requiredWear <= 1) {
-            // 计算对应原始磨损
-            const originalWear = requiredWear * material.wear_range + material.min_wear;
-            replacements.push({
-                materialName: material.name,
-                replaceMaterial: material,
-                requiredTransformedWear: requiredWear,
-                requiredOriginalWear: originalWear,
-                improvement: neededIncrease
-            });
+        if (material.transformed_wear < minTransformedWear) {
+            minTransformedWear = material.transformed_wear;
+            materialToReplace = material;
         }
     }
     
-    // 按改善程度排序
-    replacements.sort((a, b) => b.improvement - a.improvement);
+    if (materialToReplace) {
+        // 计算需要的新材料归一化磨损
+        // 新总磨损 = 当前总磨损 - 被替换材料磨损 + 新材料磨损
+        // 目标总磨损 = 当前总磨损 - minTransformedWear + requiredWear
+        // 所以：requiredWear = 目标总磨损 - (当前总磨损 - minTransformedWear)
+        const requiredWear = targetTotalTransformedWear - (currentTotal - minTransformedWear);
+        
+        if (requiredWear >= 0 && requiredWear <= 1) {
+            replacements.push({
+                materialName: materialToReplace.name,
+                replaceMaterial: materialToReplace,
+                requiredTransformedWear: requiredWear,
+                improvement: requiredWear - minTransformedWear
+            });
+        }
+    }
     
     return replacements;
 }
@@ -1019,22 +1028,33 @@ function displayOptimizationResults(result) {
     if (result.groups.length > 0) {
         html += '<h3>详细分组情况:</h3>';
         
+        // 获取目标磨损参数用于验证
+        const targetMaxWear = parseFloat(document.getElementById('targetWear').value);
+        const targetMinWear = parseFloat(document.getElementById('targetMinWear').value);
+        const targetMaxWearFixed = parseFloat(document.getElementById('targetMaxWearFixed').value);
+        
         for (let i = 0; i < result.groups.length; i++) {
             const group = result.groups[i];
-            const wearDiff = result.target_total_transformed_wear - group.total_transformed_wear;
             
             html += `<div class="group-result">
                 <div class="group-header">
                     第 ${i + 1} 组
                 </div>
                 <div>实际产出磨损: <span style="color: #28a745; font-weight: bold;">${group.actual_wear.toFixed(17)}</span></div>
+                <div>目标最大磨损: <span style="color: #6c757d;">${targetMaxWear}</span></div>
                 <div>磨损利用率: ${(group.wear_utilization * 100).toFixed(1)}%</div>`;
             
             // 计算替换建议
             const replacementTargets = calculateReplacementRanges(group, result.target_total_transformed_wear);
             
             if (replacementTargets.length > 0) {
-                const bestReplacement = replacementTargets[0]; // 取最优的替换建议
+                const bestReplacement = replacementTargets[0];
+                
+                // 验证替换后的实际磨损
+                const newTotalTransformedWear = group.total_transformed_wear - bestReplacement.replaceMaterial.transformed_wear + bestReplacement.requiredTransformedWear;
+                const newAvgTransformedWear = newTotalTransformedWear / 5;
+                const newActualWear = newAvgTransformedWear * (targetMaxWearFixed - targetMinWear) + targetMinWear;
+                const isValid = newActualWear <= targetMaxWear;
                 
                 // 获取所有材料类型的磨损范围配置
                 const materialRanges = {};
@@ -1053,21 +1073,27 @@ function displayOptimizationResults(result) {
                     const originalWear = bestReplacement.requiredTransformedWear * wearRange + minWear;
                     
                     // 检查计算出的原始磨损是否在合理范围内
-                    const isValid = originalWear >= minWear && originalWear <= maxWear;
-                    const displayClass = isValid ? 'valid-wear' : 'invalid-wear';
+                    const isWearValid = originalWear >= minWear && originalWear <= maxWear;
+                    const displayClass = isWearValid ? 'valid-wear' : 'invalid-wear';
                     
                     originalWearSuggestions += `
                         <div class="${displayClass}">
                             ${materialName}: <span style="font-weight: bold;">${originalWear.toFixed(17)}</span>
-                            ${!isValid ? ' <span style="color: #dc3545;">(超出材料磨损范围)</span>' : ''}
+                            ${!isWearValid ? ' <span style="color: #dc3545;">(超出材料磨损范围)</span>' : ''}
                         </div>`;
                 }
                 
-                html += `<div class="suggestion">
-                    <strong>最优替换建议:</strong> 将 ${bestReplacement.materialName} 的材料替换为归一化磨损 <span style="color: #28a745; font-weight: bold;">${bestReplacement.requiredTransformedWear.toFixed(17)}</span> 的材料
-                    <div style="margin-top: 8px;"><strong>具体对应原始磨损 (所有材料类型):</strong></div>
+                html += `<div class="suggestion ${isValid ? 'valid-suggestion' : 'invalid-suggestion'}">
+                    <strong>替换建议:</strong> 将 ${bestReplacement.materialName} 的材料替换为归一化磨损 <span style="font-weight: bold;">${bestReplacement.requiredTransformedWear.toFixed(17)}</span> 的材料
+                    <div style="margin-top: 8px;"><strong>替换后产出磨损:</strong> ${newActualWear.toFixed(17)} ${isValid ? '✅' : '❌'}</div>
+                    ${!isValid ? `<div style="color: #dc3545;">警告: 替换后将超出目标磨损 ${targetMaxWear}</div>` : ''}
+                    <div style="margin-top: 8px;"><strong>对应原始磨损 (所有材料类型):</strong></div>
                     ${originalWearSuggestions}
                     <div style="margin-top: 8px;"><small>改善程度: +${bestReplacement.improvement.toFixed(17)} 归一化磨损</small></div>
+                </div>`;
+            } else {
+                html += `<div class="status info">
+                    当前组合已接近最优，替换单个材料无法进一步改善
                 </div>`;
             }
             
@@ -1087,7 +1113,7 @@ function displayOptimizationResults(result) {
             // 显示所有材料，但只在需要替换的材料上标记
             for (const material of group.materials) {
                 const isReplaceable = material === materialToReplace;
-                html += `<div class="material-item ${isReplaceable ? 'suggestion' : ''}">
+                html += `<div class="material-item ${isReplaceable ? 'replaceable' : ''}">
                     ${material.name}: <span style="color: #28a745; font-weight: bold;">原始磨损 ${material.original_wear.toFixed(17)}</span>, <span style="color: #6c757d; opacity: 0.7;">归一化磨损 ${material.transformed_wear.toFixed(17)}, 原始位置: ${material.original_order}</span>
                     ${isReplaceable ? ' [可替换]' : ''}
                 </div>`;
