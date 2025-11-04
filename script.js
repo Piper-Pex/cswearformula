@@ -4,6 +4,7 @@ let materialOrderTracker = {};
 let materialCurrentOrders = {}; // 改为每种材料独立的计数器
 let lastOptimizationResult = null;
 let magicMaterialSearchResult = null; // 添加魔法材料搜索结果
+let isTenCombineMode = false; // 添加十合一模式标志
 
 // 数据预处理函数 - 支持两种格式
 function parseInventoryData(inputText) {
@@ -231,12 +232,30 @@ function showStatus(message, type) {
     statusElement.className = `status ${type}`;
 }
 
+// 切换十合一模式
+function toggleTenCombineMode() {
+    isTenCombineMode = document.getElementById('tenCombineMode').checked;
+    const modeText = isTenCombineMode ? "十合一" : "五合一";
+    showStatus(`已切换到${modeText}炼金模式`, 'info');
+    
+    // 更新按钮文本
+    const magicBtn = document.getElementById('magicMaterialBtn');
+    if (isTenCombineMode) {
+        magicBtn.textContent = '🔮 寻找十合一魔法材料';
+    } else {
+        magicBtn.textContent = '🔮 寻找五合一魔法材料';
+    }
+}
+
 // 优化分配
 function optimizeAllocation() {
     if (getTotalMaterials() === 0) {
         showStatus('没有可优化的数据', 'error');
         return;
     }
+    
+    // 获取当前模式
+    const groupSize = isTenCombineMode ? 10 : 5;
     
     // 获取磨损范围配置
     const materialRanges = {};
@@ -252,7 +271,7 @@ function optimizeAllocation() {
     const targetMaxWearFixed = parseFloat(document.getElementById('targetMaxWearFixed').value);
     
     // 运行优化算法
-    const result = optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
+    const result = optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed, groupSize);
     
     // 显示结果
     displayOptimizationResults(result);
@@ -265,7 +284,7 @@ function resetOptimization() {
 }
 
 // 修正替换建议计算函数
-function calculateReplacementRanges(group, targetTotalTransformedWear) {
+function calculateReplacementRanges(group, targetTotalTransformedWear, groupSize) {
     const currentTotal = group.total_transformed_wear;
     const neededIncrease = targetTotalTransformedWear - currentTotal;
     
@@ -303,14 +322,15 @@ function calculateReplacementRanges(group, targetTotalTransformedWear) {
 }
 
 // 优化算法核心函数 - 改进版本：更全面地搜索接近目标磨损的组合
-function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed) {
+function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed, groupSize = 5) {
     // 计算目标平均变形磨损
     const targetAvgTransformedWear = (targetMaxWear - targetMinWear) / (targetMaxWearFixed - targetMinWear);
-    const targetTotalTransformedWear = targetAvgTransformedWear * 5;
+    const targetTotalTransformedWear = targetAvgTransformedWear * groupSize;
     
     console.log(`目标磨损: ≤${targetMaxWear}`);
     console.log(`目标平均变形磨损: ${targetAvgTransformedWear.toFixed(17)}`);
     console.log(`目标总变形磨损: ${targetTotalTransformedWear.toFixed(17)}`);
+    console.log(`每组材料数量: ${groupSize}`);
     
     // 计算每个材料的归一化变形磨损
     const transformedMaterials = [];
@@ -357,23 +377,23 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
     
     console.log("=== 改进的组合搜索策略 ===");
     
-    while (availableMaterials.length >= 5) {
+    while (availableMaterials.length >= groupSize) {
         let bestCombination = null;
         let bestActualWear = 0; // 优先选择实际磨损更高的组合
         let bestTotalTransformed = 0;
         
         // 策略1: 优先搜索高磨损组合
         // 从高磨损区域开始，尝试找到最接近但不超过目标磨损的组合
-        for (let startIdx = 0; startIdx <= Math.min(50, availableMaterials.length - 5); startIdx++) {
+        for (let startIdx = 0; startIdx <= Math.min(50, availableMaterials.length - groupSize); startIdx++) {
             // 尝试不同大小的搜索窗口
-            for (let windowSize = 5; windowSize <= Math.min(20, availableMaterials.length - startIdx); windowSize++) {
-                if (startIdx + 5 > availableMaterials.length) continue;
+            for (let windowSize = groupSize; windowSize <= Math.min(20, availableMaterials.length - startIdx); windowSize++) {
+                if (startIdx + groupSize > availableMaterials.length) continue;
                 
                 // 在窗口内搜索最佳组合
-                for (let i = startIdx; i <= startIdx + windowSize - 5; i++) {
-                    const combination = availableMaterials.slice(i, i + 5);
+                for (let i = startIdx; i <= startIdx + windowSize - groupSize; i++) {
+                    const combination = availableMaterials.slice(i, i + groupSize);
                     const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
-                    const avgTransformed = totalWear / 5;
+                    const avgTransformed = totalWear / groupSize;
                     const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                     
                     // 检查是否满足磨损限制且比当前最佳组合更好
@@ -391,10 +411,10 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
             console.log("策略1未找到理想组合，启用策略2：全局搜索");
             
             // 在整个可用材料范围内搜索
-            for (let i = 0; i <= availableMaterials.length - 5; i++) {
-                const combination = availableMaterials.slice(i, i + 5);
+            for (let i = 0; i <= availableMaterials.length - groupSize; i++) {
+                const combination = availableMaterials.slice(i, i + groupSize);
                 const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
-                const avgTransformed = totalWear / 5;
+                const avgTransformed = totalWear / groupSize;
                 const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                 
                 if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
@@ -410,10 +430,10 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
             console.log("策略2未找到合适组合，启用策略3：允许轻微超出");
             const tolerance = targetMaxWear * 0.01; // 允许1%的超出
             
-            for (let i = 0; i <= availableMaterials.length - 5; i++) {
-                const combination = availableMaterials.slice(i, i + 5);
+            for (let i = 0; i <= availableMaterials.length - groupSize; i++) {
+                const combination = availableMaterials.slice(i, i + groupSize);
                 const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
-                const avgTransformed = totalWear / 5;
+                const avgTransformed = totalWear / groupSize;
                 const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                 
                 if (actualWear <= targetMaxWear + tolerance && actualWear > bestActualWear) {
@@ -427,9 +447,9 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
         // 如果仍然找不到，使用最高磨损组合作为最后手段
         if (bestCombination === null) {
             console.log("使用最高磨损组合作为最后手段");
-            bestCombination = availableMaterials.slice(0, 5); // 取最高的5个
+            bestCombination = availableMaterials.slice(0, groupSize); // 取最高的groupSize个
             const totalWear = bestCombination.reduce((sum, m) => sum + m.transformed_wear, 0);
-            const avgTransformed = totalWear / 5;
+            const avgTransformed = totalWear / groupSize;
             const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
             
             if (actualWear > targetMaxWear) {
@@ -469,7 +489,7 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
         availableMaterials.sort((a, b) => b.transformed_wear - a.transformed_wear);
         
         // 如果剩余材料很少，提前停止
-        if (availableMaterials.length < 10) {
+        if (availableMaterials.length < groupSize * 2) {
             console.log("剩余材料较少，提前停止搜索");
             break;
         }
@@ -478,7 +498,7 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
     // 第二阶段：对剩余的低磨损材料进行精细组合（如果还有足够材料）
     console.log("=== 第二阶段：剩余材料精细优化 ===");
     
-    if (availableMaterials.length >= 5) {
+    if (availableMaterials.length >= groupSize) {
         // 对剩余材料尝试不同的组合策略
         const remainingGroups = [];
         let phase2Materials = [...availableMaterials];
@@ -486,7 +506,7 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
         // 按磨损从高到低排序
         phase2Materials.sort((a, b) => b.transformed_wear - a.transformed_wear);
         
-        while (phase2Materials.length >= 5) {
+        while (phase2Materials.length >= groupSize) {
             let bestCombination = null;
             let bestActualWear = 0;
             
@@ -495,33 +515,41 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
                 let combination;
                 
                 switch (strategy) {
-                    case 0: // 取最高的5个
-                        combination = phase2Materials.slice(0, 5);
+                    case 0: // 取最高的groupSize个
+                        combination = phase2Materials.slice(0, groupSize);
                         break;
-                    case 1: // 取次高的5个
-                        combination = phase2Materials.slice(1, 6);
+                    case 1: // 取次高的groupSize个
+                        combination = phase2Materials.slice(1, groupSize + 1);
                         break;
                     case 2: // 混合高低磨损
-                        combination = [
-                            phase2Materials[0],
-                            phase2Materials[1],
-                            phase2Materials[Math.floor(phase2Materials.length / 2)],
-                            phase2Materials[phase2Materials.length - 2],
-                            phase2Materials[phase2Materials.length - 1]
-                        ];
+                        combination = [];
+                        // 取几个高磨损，几个中磨损，几个低磨损
+                        const highCount = Math.floor(groupSize * 0.4);
+                        const midCount = Math.floor(groupSize * 0.3);
+                        const lowCount = groupSize - highCount - midCount;
+                        
+                        for (let i = 0; i < highCount; i++) {
+                            combination.push(phase2Materials[i]);
+                        }
+                        for (let i = 0; i < midCount; i++) {
+                            combination.push(phase2Materials[Math.floor(phase2Materials.length / 2) + i]);
+                        }
+                        for (let i = 0; i < lowCount; i++) {
+                            combination.push(phase2Materials[phase2Materials.length - 1 - i]);
+                        }
                         break;
                     case 3: // 随机采样多个组合
                         for (let attempt = 0; attempt < 10; attempt++) {
                             const sampled = [];
                             const indices = new Set();
-                            while (indices.size < 5) {
+                            while (indices.size < groupSize) {
                                 indices.add(Math.floor(Math.random() * phase2Materials.length));
                             }
                             for (const idx of indices) {
                                 sampled.push(phase2Materials[idx]);
                             }
                             const totalWear = sampled.reduce((sum, m) => sum + m.transformed_wear, 0);
-                            const avgTransformed = totalWear / 5;
+                            const avgTransformed = totalWear / groupSize;
                             const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                             
                             if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
@@ -532,11 +560,11 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
                         break;
                     case 4: // 系统性地搜索所有可能组合（仅当材料较少时）
                         if (phase2Materials.length <= 15) {
-                            // 生成所有可能的5个材料组合
-                            const allCombinations = generateCombinations(phase2Materials, 5);
+                            // 生成所有可能的groupSize个材料组合
+                            const allCombinations = generateCombinations(phase2Materials, groupSize);
                             for (const comb of allCombinations) {
                                 const totalWear = comb.reduce((sum, m) => sum + m.transformed_wear, 0);
-                                const avgTransformed = totalWear / 5;
+                                const avgTransformed = totalWear / groupSize;
                                 const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                                 
                                 if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
@@ -550,7 +578,7 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
                 
                 if (strategy !== 3 && strategy !== 4) { // 策略3和4已经在内部处理
                     const totalWear = combination.reduce((sum, m) => sum + m.transformed_wear, 0);
-                    const avgTransformed = totalWear / 5;
+                    const avgTransformed = totalWear / groupSize;
                     const actualWear = avgTransformed * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                     
                     if (actualWear <= targetMaxWear && actualWear > bestActualWear) {
@@ -600,7 +628,7 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
     // 统计结果
     console.log(`合成结果:`);
     console.log(`可合成组数: ${groups.length}`);
-    console.log(`使用材料数: ${groups.length * 5}`);
+    console.log(`使用材料数: ${groups.length * groupSize}`);
     console.log(`剩余材料数: ${unusedMaterials.length}`);
     
     let totalEfficiency = 0;
@@ -617,11 +645,12 @@ function optimizeMaterialAllocation(materialsData, materialRanges, targetMaxWear
         groups: groups,
         unused_materials: unusedMaterials,
         total_groups: groups.length,
-        total_used: groups.length * 5,
+        total_used: groups.length * groupSize,
         total_unused: unusedMaterials.length,
         target_total_transformed_wear: targetTotalTransformedWear,
         avg_efficiency: totalEfficiency,
         avg_utilization: totalUtilization,
+        group_size: groupSize, // 保存每组材料数量
         // 添加按类型组织的未使用材料
         unused_by_type: {}
     };
@@ -691,7 +720,8 @@ function testMagicMaterial(transformedWear, baseMaterials, materialRanges, targe
     testMaterials[targetMaterial].push(originalWear);
     
     // 运行优化
-    const result = optimizeMaterialAllocation(testMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
+    const groupSize = isTenCombineMode ? 10 : 5;
+    const result = optimizeMaterialAllocation(testMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed, groupSize);
     
     return result.total_groups;
 }
@@ -730,7 +760,8 @@ function findMagicMaterial() {
     }
     
     // 先计算基准组数（不添加魔法材料，使用降低精度后的数据）
-    const baselineResult = optimizeMaterialAllocation(reducedPrecisionMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed);
+    const groupSize = isTenCombineMode ? 10 : 5;
+    const baselineResult = optimizeMaterialAllocation(reducedPrecisionMaterials, materialRanges, targetMaxWear, targetMinWear, targetMaxWearFixed, groupSize);
     const baselineGroups = baselineResult.total_groups;
     
     console.log(`基准组数: ${baselineGroups}`);
@@ -749,7 +780,7 @@ function findMagicMaterial() {
         
         // 收集所有替换建议
         for (const group of lastOptimizationResult.groups) {
-            const replacements = calculateReplacementRanges(group, lastOptimizationResult.target_total_transformed_wear);
+            const replacements = calculateReplacementRanges(group, lastOptimizationResult.target_total_transformed_wear, groupSize);
             for (const replacement of replacements) {
                 if (replacement.improvement > 0) { // 只考虑能改善的组合
                     replacementTargets.push({
@@ -873,7 +904,8 @@ function findMagicMaterial() {
         improvement: bestImprovement,
         candidatePoints: candidatePoints,
         bestMaterialType: bestMaterialType,
-        usedReducedPrecision: true
+        usedReducedPrecision: true,
+        groupSize: groupSize
     };
     
     // 显示结果
@@ -887,8 +919,10 @@ function displayMagicMaterialResult() {
     
     let html = resultsContent.innerHTML; // 保留现有内容
     
+    const modeText = isTenCombineMode ? "十合一" : "五合一";
+    
     html += `<div class="group-result" style="border-left: 4px solid #9b59b6;">
-        <div class="group-header" style="color: #9b59b6;">🎯 魔法材料搜索结果</div>`;
+        <div class="group-header" style="color: #9b59b6;">🎯 ${modeText}魔法材料搜索结果</div>`;
     
     // 添加精度提示
     if (result.usedReducedPrecision) {
@@ -957,7 +991,7 @@ function displayMagicMaterialResult() {
     html += `</div>`;
     
     resultsContent.innerHTML = html;
-    showStatus(`魔法材料搜索完成! ${result.improvement > 0 ? `找到改善 +${result.improvement} 组的最佳材料` : '未找到改善材料'}`, 
+    showStatus(`${modeText}魔法材料搜索完成! ${result.improvement > 0 ? `找到改善 +${result.improvement} 组的最佳材料` : '未找到改善材料'}`, 
                result.improvement > 0 ? 'success' : 'info');
 }
 
@@ -1015,10 +1049,14 @@ function displayOptimizationResults(result) {
     const resultsContent = document.getElementById('resultsContent');
     let html = '';
     
+    const modeText = isTenCombineMode ? "十合一" : "五合一";
+    const groupSize = result.group_size || (isTenCombineMode ? 10 : 5);
+    
     html += `<div class="status success">
-        <strong>优化完成！</strong><br>
+        <strong>${modeText}优化完成！</strong><br>
         总材料数: ${result.total_used + result.total_unused}<br>
         成功合成组数: ${result.total_groups}<br>
+        每组材料数: ${groupSize}<br>
         使用材料数: ${result.total_used}<br>
         剩余材料数: ${result.total_unused}<br>
         材料利用率: ${((result.total_used / (result.total_used + result.total_unused)) * 100).toFixed(1)}%<br>
@@ -1026,7 +1064,7 @@ function displayOptimizationResults(result) {
     </div>`;
     
     if (result.groups.length > 0) {
-        html += '<h3>详细分组情况:</h3>';
+        html += `<h3>详细分组情况 (${modeText}):</h3>`;
         
         // 获取目标磨损参数用于验证
         const targetMaxWear = parseFloat(document.getElementById('targetWear').value);
@@ -1038,21 +1076,21 @@ function displayOptimizationResults(result) {
             
             html += `<div class="group-result">
                 <div class="group-header">
-                    第 ${i + 1} 组
+                    第 ${i + 1} 组 (${modeText})
                 </div>
                 <div>实际产出磨损: <span style="color: #28a745; font-weight: bold;">${group.actual_wear.toFixed(17)}</span></div>
                 <div>目标最大磨损: <span style="color: #6c757d;">${targetMaxWear}</span></div>
                 <div>磨损利用率: ${(group.wear_utilization * 100).toFixed(1)}%</div>`;
             
             // 计算替换建议
-            const replacementTargets = calculateReplacementRanges(group, result.target_total_transformed_wear);
+            const replacementTargets = calculateReplacementRanges(group, result.target_total_transformed_wear, groupSize);
             
             if (replacementTargets.length > 0) {
                 const bestReplacement = replacementTargets[0];
                 
                 // 验证替换后的实际磨损
                 const newTotalTransformedWear = group.total_transformed_wear - bestReplacement.replaceMaterial.transformed_wear + bestReplacement.requiredTransformedWear;
-                const newAvgTransformedWear = newTotalTransformedWear / 5;
+                const newAvgTransformedWear = newTotalTransformedWear / groupSize;
                 const newActualWear = newAvgTransformedWear * (targetMaxWearFixed - targetMinWear) + targetMinWear;
                 const isValid = newActualWear <= targetMaxWear;
                 
@@ -1097,7 +1135,7 @@ function displayOptimizationResults(result) {
                 </div>`;
             }
             
-            html += '<div><strong>组内材料 (包含原始位置):</strong></div>';
+            html += `<div><strong>组内材料 (包含原始位置, 共${group.materials.length}个):</strong></div>`;
             
             // 找出组内归一化磨损最小的材料（需要被替换的那个）
             let minTransformedWear = Infinity;
@@ -1124,7 +1162,7 @@ function displayOptimizationResults(result) {
     }
     
     if (result.unused_materials.length > 0) {
-        html += '<h3>未使用材料 (可复制到输入框继续处理):</h3>';
+        html += `<h3>未使用材料 (可复制到输入框继续处理):</h3>`;
         const unusedByType = {};
         
         for (const material of result.unused_materials) {
@@ -1167,7 +1205,7 @@ function displayOptimizationResults(result) {
     
     // 添加归一化说明
     html += `<div class="status info">
-        <strong>归一化说明:</strong><br>
+        <strong>${modeText}归一化说明:</strong><br>
         所有材料的磨损都通过公式 <code>归一化磨损 = (原始磨损 - 材料最低磨损) / (材料最高磨损 - 材料最低磨损)</code> 转换到0-1区间<br>
         产出磨损通过公式 <code>产出磨损 = (平均归一化磨损) × (合成后金饰品的最大磨损 - 目标最小磨损) + 目标最小磨损</code> 计算<br>
         <strong>优化策略:</strong> 优先使用高磨损材料，两阶段优化，最大化磨损利用率
@@ -1186,6 +1224,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 添加魔法材料按钮事件绑定
     document.getElementById('magicMaterialBtn').addEventListener('click', findMagicMaterial);
+    
+    // 绑定十合一模式切换事件
+    document.getElementById('tenCombineMode').addEventListener('change', toggleTenCombineMode);
     
     showStatus('准备就绪，请粘贴库存数据开始', 'info');
 });

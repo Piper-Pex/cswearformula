@@ -114,6 +114,15 @@
             background-color: #c0392b;
         }
         
+        .btn-magic {
+            background-color: #9b59b6;
+            color: white;
+        }
+        
+        .btn-magic:hover {
+            background-color: #8e44ad;
+        }
+        
         .status {
             padding: 15px;
             border-radius: 6px;
@@ -235,7 +244,7 @@
             border-left: 4px solid #3498db;
         }
         
-        .material-item.suggestion {
+        .material-item.replaceable {
             background: #fff3cd;
             border-left-color: #ffc107;
         }
@@ -246,6 +255,47 @@
             border-radius: 6px;
             margin: 15px 0;
             border-left: 4px solid #3498db;
+        }
+        
+        .suggestion.valid-suggestion {
+            background: #d4edda;
+            border-left-color: #28a745;
+        }
+        
+        .suggestion.invalid-suggestion {
+            background: #f8d7da;
+            border-left-color: #dc3545;
+        }
+        
+        .valid-wear {
+            color: #28a745;
+        }
+        
+        .invalid-wear {
+            color: #dc3545;
+        }
+        
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #fff3cd;
+            border-radius: 6px;
+            border-left: 4px solid #ffc107;
+        }
+        
+        .mode-toggle label {
+            font-weight: 600;
+            color: #856404;
+            cursor: pointer;
+        }
+        
+        .mode-toggle input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
         }
         
         pre {
@@ -294,7 +344,6 @@
             <div class="subtitle">粘贴库存数据，优化材料分配，最大化合成收益</div>
         </div>
         
-        <!-- 其他HTML内容保持不变 -->
         <div class="input-section">
             <textarea id="inventoryInput" placeholder="在此粘贴库存数据...
 支持格式:
@@ -320,6 +369,12 @@
         </div>
         
         <div class="section">
+            <h3>炼金模式设置</h3>
+            <div class="mode-toggle">
+                <input type="checkbox" id="tenCombineMode">
+                <label for="tenCombineMode">开启十合一炼金模式 (关闭为五合一模式)</label>
+            </div>
+            
             <h3>材料磨损范围配置</h3>
             <div id="rangeInputs" class="range-inputs">
                 <!-- 动态生成的范围输入将在这里显示 -->
@@ -341,9 +396,9 @@
             </div>
             
             <div class="button-group">
-				<button id="optimizeBtn" class="btn-primary">开始优化</button>
-				<button id="magicMaterialBtn" class="btn-magic">🔮 寻找魔法材料</button>
-				<button id="resetBtn" class="btn-secondary">重置结果</button>
+                <button id="optimizeBtn" class="btn-primary">开始优化</button>
+                <button id="magicMaterialBtn" class="btn-magic">🔮 寻找五合一魔法材料</button>
+                <button id="resetBtn" class="btn-secondary">重置结果</button>
             </div>
         </div>
         
